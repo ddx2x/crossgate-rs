@@ -18,3 +18,4 @@ tower-http = { version = "0.3.0", features = ["fs", "trace"] }
 axum = {version = "0.5", features = ["headers"]}
 headers = "0.3"
 crossbeam = "0.8"
+anyhow = "1.0"

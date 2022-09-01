@@ -4,11 +4,8 @@
 mod api;
 mod lba;
 mod register;
-use crossbeam::sync::WaitGroup;
-use plugin::get_plugin_type;
 pub use register::Register;
 use serde::Deserialize;
-use tokio_context::context::Context;
 
 use std::net::SocketAddr;
 
@@ -47,7 +44,7 @@ where
     S: serde::Serializer,
     T: Deserialize<'a>,
 {
-    type Future<'b>: std::future::Future<Output = Result<T, TransportError>>
+    type Future<'b>: std::future::Future<Output = anyhow::Result<T, TransportError>>
     where
         Self: 'b;
 

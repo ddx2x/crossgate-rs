@@ -22,8 +22,6 @@ impl std::fmt::Display for NetError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

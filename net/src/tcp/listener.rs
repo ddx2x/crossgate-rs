@@ -8,7 +8,7 @@ pub struct Listener {
 }
 
 impl Listener {
-    pub async fn run<H>(&mut self, h: H) -> crate::Result<()>
+    pub async fn run<H>(&mut self, h: H) -> anyhow::Result<()>
     where
         H: Handle,
     {

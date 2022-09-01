@@ -59,7 +59,7 @@ async fn handle(
     req: Request<Body>,
     intercepts: &[Intercept],
     self_handle: Option<ServeHTTP>,
-) -> Result<Response<Body>, Infallible> {
+) -> anyhow::Result<Response<Body>, Infallible> {
     for intercept in intercepts {
         let res = intercept(&req, &mut Response::new(Body::empty()));
         match res {

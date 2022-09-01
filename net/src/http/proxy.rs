@@ -179,7 +179,7 @@ fn create_proxied_request<B>(
     forward_url: &str,
     mut request: Request<B>,
     upgrade_type: Option<&String>,
-) -> Result<Request<B>, ProxyError> {
+) -> anyhow::Result<Request<B>, ProxyError> {
     let contains_te_trailers_value = request
         .headers()
         .get(&*TE_HEADER)
@@ -244,7 +244,7 @@ pub async fn call<'a, T: hyper::client::connect::Connect + Clone + Send + Sync +
     forward_uri: &str,
     mut request: Request<Body>,
     client: &'a Client<T>,
-) -> Result<Response<Body>, ProxyError> {
+) -> anyhow::Result<Response<Body>, ProxyError> {
     let request_upgrade_type = get_upgrade_type(request.headers());
     let request_upgraded = request.extensions_mut().remove::<OnUpgrade>();
 
@@ -308,7 +308,7 @@ impl<T: hyper::client::connect::Connect + Clone + Send + Sync + 'static> Reverse
         client_ip: IpAddr,
         forward_uri: &str,
         request: Request<Body>,
-    ) -> Result<Response<Body>, ProxyError> {
+    ) -> anyhow::Result<Response<Body>, ProxyError> {
         call::<T>(client_ip, forward_uri, request, &self.client).await
     }
 }

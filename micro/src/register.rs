@@ -16,7 +16,10 @@ impl Default for Register {
 }
 
 impl Register {
-    pub(crate) async fn register(&self, service: &dyn crate::Service) -> Result<(), RegisterError> {
+    pub(crate) async fn register(
+        &self,
+        service: &dyn crate::Service,
+    ) -> anyhow::Result<(), RegisterError> {
         let lba = service.lab().to_string();
 
         let addr = format!(
@@ -31,9 +34,9 @@ impl Register {
             addr,
         };
 
-        if let Err(e) = plugin::set(&*service.name(), content).await {
-            return Err(RegisterError::RegisterError(e.to_string()));
-        }
+        plugin::set(&*service.name(), content)
+            .await
+            .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
 
         Ok(())
     }
@@ -41,7 +44,7 @@ impl Register {
     pub(crate) async fn get_service(
         &self,
         name: &str,
-    ) -> Result<(crate::LoadBalancerAlgorithm, crate::Endpoint), RegisterError> {
+    ) -> anyhow::Result<(crate::LoadBalancerAlgorithm, crate::Endpoint), RegisterError> {
         if let Ok(contents) = plugin::get(name).await {
             let addrs = contents.iter().map(|c| c.addr.clone()).collect();
             let mut lba = "".to_string();
