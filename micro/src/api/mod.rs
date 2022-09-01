@@ -43,9 +43,9 @@ pub fn _default_intercept(_: &Request<Body>, _: &mut Response<Body>) -> Intercep
     InterceptType::SelfHandle
 }
 
-pub type ServeHTTP = fn(req: &Request<Body>) -> Result<Response<Body>, Infallible>;
+pub type ServeHTTP = fn(req: &Request<Body>) -> anyhow::Result<Response<Body>>;
 
-pub fn default_serve_http(_: &Request<Body>) -> Result<Response<Body>, Infallible> {
+pub fn default_serve_http(_: &Request<Body>) -> anyhow::Result<Response<Body>> {
     Ok(Response::new(Body::from(TITLE)))
 }
 
@@ -59,7 +59,7 @@ async fn handle(
     req: Request<Body>,
     intercepts: &[Intercept],
     self_handle: Option<ServeHTTP>,
-) -> anyhow::Result<Response<Body>, Infallible> {
+) -> anyhow::Result<Response<Body>> {
     for intercept in intercepts {
         let res = intercept(&req, &mut Response::new(Body::empty()));
         match res {
