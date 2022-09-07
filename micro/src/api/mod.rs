@@ -8,20 +8,15 @@ use plugin::PluginType::Mongodb;
 use tokio_context::context::Context;
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 
 use crate::{Endpoint, Register};
 
 #[inline]
 async fn hash_node<'a>(lba: crate::LoadBalancerAlgorithm<'a>, endpoint: Endpoint) -> String {
     lba.get(endpoint.get_address().as_slice()).await
-}
-
-pub enum InterceptType {
-    SelfHandle,
-    Redirect,
-    NotAuthorized,
-    Next,
 }
 
 static TITLE: &str = r#"
@@ -37,10 +32,21 @@ static TITLE: &str = r#"
 </html>
 "#;
 
-pub type Intercept = fn(req: &Request<Body>, w: &mut Response<Body>) -> InterceptType;
+pub enum IntercepterType {
+    SelfHandle,
+    Redirect,
+    NotAuthorized,
+    Next,
+}
 
-pub fn _default_intercept(_: &Request<Body>, _: &mut Response<Body>) -> InterceptType {
-    InterceptType::SelfHandle
+pub type Intercepter = fn(
+    r: &mut Request<Body>,
+    w: &mut Response<Body>,
+)
+    -> Pin<Box<dyn Future<Output = IntercepterType> + Send + Sync + 'static>>;
+
+pub fn _default_intercept(_: &Request<Body>, _: &mut Response<Body>) -> IntercepterType {
+    IntercepterType::SelfHandle
 }
 
 pub type ServeHTTP = fn(req: &Request<Body>) -> anyhow::Result<Response<Body>>;
@@ -53,30 +59,31 @@ fn default_response() -> Response<Body> {
     Response::new(Body::from(TITLE))
 }
 
-async fn handle(
+async fn intercept(
     register: &Register,
     client_ip: IpAddr,
-    req: Request<Body>,
-    intercepts: &[Intercept],
+    mut req: Request<Body>,
+    intercepters: &'static [Intercepter],
     self_handle: Option<ServeHTTP>,
 ) -> anyhow::Result<Response<Body>> {
-    for intercept in intercepts {
-        let res = intercept(&req, &mut Response::new(Body::empty()));
+    for intercepter in intercepters {
+        let res = &mut Response::new(Body::empty());
+        let res = intercepter(&mut req, res).await;
         match res {
-            InterceptType::SelfHandle => {
-                let self_handle = self_handle.unwrap_or(default_serve_http);
-                return self_handle(&req);
+            IntercepterType::SelfHandle => {
+                // let self_handle = self_handle.unwrap_or(default_serve_http);
+                // return self_handle(&req);
             }
-            InterceptType::Redirect => {
+            IntercepterType::Redirect => {
                 break;
             }
-            InterceptType::NotAuthorized => {
+            IntercepterType::NotAuthorized => {
                 return Ok(Response::builder()
                     .status(StatusCode::UNAUTHORIZED)
                     .body(Body::empty())
                     .unwrap());
             }
-            InterceptType::Next => {
+            IntercepterType::Next => {
                 continue;
             }
         }
@@ -132,26 +139,7 @@ async fn handle(
     }
 }
 
-async fn _run(addr: String, intercepts: &'static [Intercept], sh: Option<ServeHTTP>) {
-    let register = &Register {};
-    let make_svc = make_service_fn(|conn: &AddrStream| {
-        let remote_addr = conn.remote_addr().ip();
-        async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                handle(register, remote_addr, req, intercepts, sh)
-            }))
-        }
-    });
-
-    log::info!("Listening on {}", addr);
-
-    Server::bind(&addr.parse::<SocketAddr>().expect("invalid address"))
-        .serve(make_svc)
-        .await
-        .unwrap();
-}
-
-pub async fn run(addr: String, intercepts: &'static [Intercept], sh: Option<ServeHTTP>) {
+pub async fn run(addr: String, intercepters: &'static [Intercepter], sh: Option<ServeHTTP>) {
     dotenv::dotenv().ok();
 
     let (ctx, handle) = Context::new();
@@ -168,8 +156,26 @@ pub async fn run(addr: String, intercepts: &'static [Intercept], sh: Option<Serv
     )
     .await;
 
+    let serve = async move {
+        let register = &Register {};
+        let make_svc = make_service_fn(|conn: &AddrStream| {
+            let remote_addr = conn.remote_addr().ip();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |req| {
+                    intercept(register, remote_addr, req, intercepters, sh)
+                }))
+            }
+        });
+
+        log::info!("Listening on {}", addr);
+
+        Server::bind(&addr.parse::<SocketAddr>().expect("invalid address"))
+            .serve(make_svc)
+            .await
+            .unwrap();
+    };
     tokio::select! {
-        _ = _run(addr,intercepts,sh) => {},
+        _ = serve => {},
         _ = tokio::signal::ctrl_c() => {
             handle.cancel();
             wg.wait();

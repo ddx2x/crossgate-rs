@@ -174,7 +174,7 @@ fn forward_uri<B>(forward_url: &str, req: &Request<B>) -> String {
     url.parse().unwrap()
 }
 
-fn create_proxied_request<B>(
+async fn create_proxied_request<B>(
     client_ip: IpAddr,
     forward_url: &str,
     mut request: Request<B>,
@@ -253,7 +253,9 @@ pub async fn call<'a, T: hyper::client::connect::Connect + Clone + Send + Sync +
         forward_uri,
         request,
         request_upgrade_type.as_ref(),
-    )?;
+    )
+    .await?;
+    
     let mut response = client.request(proxied_request).await?;
 
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {

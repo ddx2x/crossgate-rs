@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use std::net::SocketAddr;
 
-pub use api::{run as run_api_server, InterceptType};
+pub use api::{run as run_api_server, Intercepter, IntercepterType};
 pub use lba::*;
 
 #[derive(Debug)]
