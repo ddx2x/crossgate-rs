@@ -1,4 +1,5 @@
 use crossbeam::sync::WaitGroup;
+use futures::future::BoxFuture;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Server};
@@ -8,9 +9,7 @@ use plugin::PluginType::Mongodb;
 use tokio_context::context::Context;
 
 use std::convert::Infallible;
-use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
 
 use crate::{Endpoint, Register};
 
@@ -39,11 +38,10 @@ pub enum IntercepterType {
     Next,
 }
 
-pub type Intercepter = fn(
-    r: &mut Request<Body>,
-    w: &mut Response<Body>,
-)
-    -> Pin<Box<dyn Future<Output = IntercepterType> + Send + Sync + 'static>>;
+pub type Intercepter = for<'a> fn(
+    r: &'a mut Request<Body>,
+    w: &'a mut Response<Body>,
+) -> BoxFuture<'a, IntercepterType>;
 
 pub fn _default_intercept(_: &Request<Body>, _: &mut Response<Body>) -> IntercepterType {
     IntercepterType::SelfHandle
@@ -71,8 +69,8 @@ async fn intercept(
         let res = intercepter(&mut req, res).await;
         match res {
             IntercepterType::SelfHandle => {
-                // let self_handle = self_handle.unwrap_or(default_serve_http);
-                // return self_handle(&req);
+                let self_handle = self_handle.unwrap_or(default_serve_http);
+                return self_handle(&req);
             }
             IntercepterType::Redirect => {
                 break;

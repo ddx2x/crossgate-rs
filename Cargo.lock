@@ -1204,6 +1204,7 @@ dependencies = [
  "anyhow",
  "crossbeam",
  "dotenv",
+ "futures",
  "hyper",
  "local-ip-address",
  "log",
