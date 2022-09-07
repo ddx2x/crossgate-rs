@@ -35,6 +35,7 @@ pub enum IntercepterType {
     SelfHandle,
     Redirect,
     NotAuthorized,
+    Interrupt, // 新增加中断，当由中间件函数处理结果
     Next,
 }
 
@@ -65,9 +66,9 @@ async fn intercept(
     self_handle: Option<ServeHTTP>,
 ) -> anyhow::Result<Response<Body>> {
     for intercepter in intercepters {
-        let res = &mut Response::new(Body::empty());
-        let res = intercepter(&mut req, res).await;
-        match res {
+        let mut res = Response::new(Body::empty());
+
+        match intercepter(&mut req, &mut res).await {
             IntercepterType::SelfHandle => {
                 let self_handle = self_handle.unwrap_or(default_serve_http);
                 return self_handle(&req);
@@ -83,6 +84,9 @@ async fn intercept(
             }
             IntercepterType::Next => {
                 continue;
+            }
+            IntercepterType::Interrupt => {
+                return Ok(res);
             }
         }
     }
