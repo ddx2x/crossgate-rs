@@ -4,6 +4,8 @@
 mod api;
 mod lba;
 mod register;
+mod web;
+
 pub use register::Register;
 use serde::Deserialize;
 
@@ -11,6 +13,7 @@ use std::net::SocketAddr;
 
 pub use api::{run as run_api_server, Intercepter, IntercepterType};
 pub use lba::*;
+pub use web::web_service_run;
 
 #[derive(Debug)]
 pub enum ServiceError {
@@ -24,7 +27,7 @@ impl std::fmt::Display for ServiceError {
 }
 
 // [service] --> [endpoint] --> [address]
-pub trait Service {
+pub trait Service: Sync + Send {
     fn name(&self) -> String;
 
     fn addr(&self) -> SocketAddr;
@@ -68,11 +71,15 @@ impl Endpoint {
     }
 }
 
-pub async fn make_service<T: Service>(s: T) -> T {
+pub async fn make_service<T>(s: T) -> T
+where
+    T: Service,
+{
     let addr = s.addr();
     if addr.ip().is_loopback() {
         panic!("service address is loopback");
     }
+
     log::info!(
         "registry service is {} ip {}",
         s.name(),
