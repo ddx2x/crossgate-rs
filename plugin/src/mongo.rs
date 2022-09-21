@@ -146,14 +146,15 @@ impl Mongodb {
     }
 
     async fn query(&self, k: &str) -> Result<Vec<crate::Content>, crate::PluginError> {
-        let c = self.collecion().await;
+        let mut mcs: Vec<MongoContent> = Vec::new();
 
-        let filter = doc! { "service": k.to_string() };
-        let option = FindOptions::builder().sort(doc! { "time": -1 }).build();
-
-        let mut result = Vec::new();
-        if let Ok(mut cursor) = c
-            .find(filter, option)
+        if let Ok(mut cursor) = self
+            .collecion()
+            .await
+            .find(
+                doc! { "service": k.to_string() },
+                FindOptions::builder().sort(doc! { "time": -1 }).build(),
+            )
             .await
             .map_err(|e| crate::PluginError::Error(e.to_string()))
         {
@@ -166,11 +167,11 @@ impl Mongodb {
                     .lock()
                     .await
                     .insert(doc.content.service.clone(), vec![doc.clone()]);
-                result.push(doc.content);
+                mcs.push(doc);
             }
         }
 
-        Ok(result)
+        Ok(mcs.iter().map(|mc| mc.content.clone()).collect())
     }
 
     async fn content(&mut self, c: &crate::Content) -> String {
@@ -216,13 +217,12 @@ impl crate::Plugin for Mongodb {
     async fn watch(&mut self) {
         let mut s = self.clone();
         tokio::spawn(async move {
-            let collection = s.collecion().await;
 
             let option = ChangeStreamOptions::builder()
                 .full_document(Some(FullDocumentType::UpdateLookup))
                 .build();
 
-            let mut stream = collection.watch(None, option).await.unwrap();
+            let mut stream = s.collecion().await.watch(None, option).await.unwrap();
 
             while let Ok(Some(evt)) = stream
                 .try_next()
