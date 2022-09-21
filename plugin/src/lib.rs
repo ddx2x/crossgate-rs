@@ -1,7 +1,3 @@
-// #![feature(generic_associated_types)]
-// #![feature(type_alias_impl_trait)]
-#![feature(is_some_with)]
-
 use async_trait::async_trait;
 use crossbeam::sync::WaitGroup;
 use futures::lock::Mutex;
@@ -15,7 +11,6 @@ mod mongo;
 use mongo::Mongodb;
 
 mod mdns_plugin;
-// #[cfg(any(plugin = "mdns", futures = "full"))]
 use mdns_plugin::Mdns;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]

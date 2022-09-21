@@ -28,16 +28,17 @@ impl Register {
             service.addr().port()
         );
 
-        let content = plugin::Content {
-            service: service.name(),
-            lba,
-            addr,
-        };
+        for name in service.name().split(',').collect::<Vec<&str>>() {
+            let content = plugin::Content {
+                service: name.to_string(),
+                lba: lba.clone(),
+                addr: addr.clone(),
+            };
 
-        plugin::set(&*service.name(), content)
-            .await
-            .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
-
+            plugin::set(name, content)
+                .await
+                .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
+        }
         Ok(())
     }
 

@@ -16,8 +16,9 @@ use crate::Content;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct MongoContent {
     #[serde(alias = "_id")]
-    id: ObjectId,
+    id: String,
 
+    #[serde(flatten)]
     content: Content,
 }
 
@@ -32,7 +33,7 @@ static COLLECTION_NAME: &str = "discovery";
 
 #[derive(Debug, Clone)]
 pub struct Mongodb {
-    c: Arc<Mutex<MongoContent>>,
+    cs: Arc<Mutex<Vec<MongoContent>>>,
     cache: Arc<Mutex<HashMap<String, Vec<MongoContent>>>>,
     client: Client,
 }
@@ -52,17 +53,8 @@ impl Mongodb {
             Err(e) => panic!("{:?}", e),
         };
 
-        let mongodb_content = MongoContent {
-            id: ObjectId::new(),
-            content: crate::Content {
-                service: "".to_string(),
-                lba: "".to_string(),
-                addr: "127.0.0.1:0".parse().unwrap(),
-            },
-        };
-
         let mut s = Self {
-            c: Arc::new(Mutex::new(mongodb_content)),
+            cs: Arc::new(Mutex::new(vec![])),
             cache: Arc::new(Mutex::new(HashMap::new())),
             client,
         };
@@ -74,7 +66,7 @@ impl Mongodb {
 
     #[inline]
     async fn init(&mut self) {
-        let collection = self.get_collection().await;
+        let collection = self.collecion().await;
 
         let mut index_options = IndexOptions::default();
         index_options.expire_after = Some(std::time::Duration::from_secs(2));
@@ -88,7 +80,7 @@ impl Mongodb {
     }
 
     #[inline]
-    async fn get_collection(&self) -> mongodb::Collection<MongoContent> {
+    async fn collecion(&self) -> mongodb::Collection<MongoContent> {
         self.client
             .database(SCHEMA_NAME)
             .collection(COLLECTION_NAME)
@@ -98,12 +90,13 @@ impl Mongodb {
     async fn update_cache(&mut self, service: String, c: &MongoContent) {
         if self.cache.lock().await.get(&service).is_none() {
             self.cache.lock().await.insert(service, vec![c.clone()]);
-        } else {
-            let mut cache = self.cache.lock().await;
-            let v = cache.get_mut(&service).unwrap();
-            if !v.iter().any(|_c| _c == c) {
-                v.push(c.clone());
-            }
+            return;
+        }
+
+        let mut cache = self.cache.lock().await;
+        let v = cache.get_mut(&service).unwrap();
+        if !v.iter().any(|_c| _c == c) {
+            v.push(c.clone());
         }
     }
 
@@ -116,28 +109,31 @@ impl Mongodb {
 
     #[inline]
     async fn renewal(&mut self) {
-        let c = self.c.lock().await.clone();
-        if let Err(e) = self.apply(c.id.clone(), &c.content).await {
-            log::error!("{:?}", e);
+        let contents = self.cs.lock().await;
+        for c in contents.clone().iter() {
+            let id = c.id.clone();
+            if let Err(e) = self.apply(&id, &c.content).await {
+                log::error!("{:?}", e);
+            }
         }
     }
 
-    async fn apply(
-        &mut self,
-        uuid: ObjectId,
-        val: &crate::Content,
+    async fn apply<'a>(
+        &self,
+        id: &'a str,
+        content: &'a crate::Content,
     ) -> Result<(), crate::PluginError> {
-        let collection = self.get_collection().await;
+        let collection = self.collecion().await;
 
         collection
             .update_one(
-                doc! {"content.service": val.service.clone(), "content.addr": &val.addr},
+                doc! {"service": content.service.clone(), "addr": &content.addr},
                 doc! {"$set":
                     {
-                    "_id" : uuid,
-                    "content.service": val.service.clone(),
-                    "content.lba": val.lba.clone(),
-                    "content.addr": &val.addr,
+                    "_id" : id,
+                    "service": content.service.clone(),
+                    "lba": content.lba.clone(),
+                    "addr": &content.addr,
                     "time": mongodb::bson::DateTime::now(),
                     },
                 },
@@ -150,9 +146,9 @@ impl Mongodb {
     }
 
     async fn query(&self, k: &str) -> Result<Vec<crate::Content>, crate::PluginError> {
-        let c = self.get_collection().await;
+        let c = self.collecion().await;
 
-        let filter = doc! { "content.service": k.to_string() };
+        let filter = doc! { "service": k.to_string() };
         let option = FindOptions::builder().sort(doc! { "time": -1 }).build();
 
         let mut result = Vec::new();
@@ -177,9 +173,11 @@ impl Mongodb {
         Ok(result)
     }
 
-    async fn set_content(&mut self, c: &crate::Content) -> ObjectId {
-        let id = ObjectId::new();
-        self.c.lock().await.clone_from(&MongoContent {
+    async fn content(&mut self, c: &crate::Content) -> String {
+        let id = ObjectId::new().to_string();
+        let mut contents = self.cs.lock().await;
+
+        contents.push(MongoContent {
             id: id.clone(),
             content: c.clone(),
         });
@@ -188,19 +186,23 @@ impl Mongodb {
     }
 
     async fn unset(&mut self) {
-        let c = self.get_collection().await;
-        c.delete_one(doc! {"_id":self.c.lock().await.id}, None)
-            .await
-            .map_err(|e| log::error!("unset service {:?}", e))
-            .unwrap();
+        let contents = self.cs.lock().await;
+        for c in contents.iter() {
+            self.collecion()
+                .await
+                .delete_one(doc! {"_id":c.id.clone()}, None)
+                .await
+                .map_err(|e| log::error!("unset service {:?}", e))
+                .unwrap();
+        }
     }
 }
 
 #[crate::async_trait]
 impl crate::Plugin for Mongodb {
-    async fn set(&mut self, k: &str, val: crate::Content) -> Result<(), crate::PluginError> {
-        let id = self.set_content(&val).await;
-        self.apply(id, &val).await
+    async fn set(&mut self, _: &str, val: crate::Content) -> Result<(), crate::PluginError> {
+        let id = self.content(&val).await;
+        self.apply(&id, &val).await
     }
 
     async fn get(&self, k: &str) -> Result<Vec<crate::Content>, crate::PluginError> {
@@ -214,7 +216,7 @@ impl crate::Plugin for Mongodb {
     async fn watch(&mut self) {
         let mut s = self.clone();
         tokio::spawn(async move {
-            let collection = s.get_collection().await;
+            let collection = s.collecion().await;
 
             let option = ChangeStreamOptions::builder()
                 .full_document(Some(FullDocumentType::UpdateLookup))

@@ -106,8 +106,7 @@ async fn intercept(
 
     let (lba, endpoint) = match register.get_service(service_name).await {
         Ok(endpoint) => endpoint,
-        Err(e) => {
-            log::error!("service not found, error: {:?}", e);
+        Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Body::empty())
@@ -116,10 +115,9 @@ async fn intercept(
     };
 
     if 0 == endpoint.get_address().len() {
-        log::warn!("not found service: {}", service_name);
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
-            .body("service unavailable".into())
+            .body(format!("{} not found", service_name).into())
             .unwrap());
     }
 
@@ -176,6 +174,7 @@ pub async fn run(addr: String, intercepters: &'static [Intercepter], sh: Option<
             .await
             .unwrap();
     };
+
     tokio::select! {
         _ = serve => {},
         _ = tokio::signal::ctrl_c() => {
