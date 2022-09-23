@@ -24,7 +24,7 @@ struct MongoContent {
 
 impl PartialEq for MongoContent {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.id.ne(&other.id)
     }
 }
 
@@ -104,7 +104,10 @@ impl Mongodb {
         let mut cache = self.cache.lock().await;
 
         for (_, values) in cache.iter_mut() {
-            values.retain(|c| c.id == id);
+            if let Some(index) = values.iter().position(|x| x.id.ne(id)) {
+                values.remove(index);
+                return;
+            }
         }
     }
 
