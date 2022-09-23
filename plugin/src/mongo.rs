@@ -94,7 +94,7 @@ impl Mongodb {
             return;
         }
         let v = cache.get_mut(&service).unwrap();
-        if !v.iter().any(|_c| _c == c) {
+        if !v.iter().any(|_c| _c.ne(c)) {
             v.push(c.clone());
         }
     }
@@ -106,7 +106,6 @@ impl Mongodb {
         for (_, values) in cache.iter_mut() {
             if let Some(index) = values.iter().position(|x| x.id.ne(id)) {
                 values.remove(index);
-                return;
             }
         }
     }
