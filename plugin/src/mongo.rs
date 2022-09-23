@@ -88,12 +88,11 @@ impl Mongodb {
 
     #[inline]
     async fn update_cache(&mut self, service: String, c: &MongoContent) {
-        if self.cache.lock().await.get(&service).is_none() {
-            self.cache.lock().await.insert(service, vec![c.clone()]);
+        let mut cache = self.cache.lock().await;
+        if !cache.contains_key(&service) {
+            cache.insert(service, vec![c.clone()]);
             return;
         }
-
-        let mut cache = self.cache.lock().await;
         let v = cache.get_mut(&service).unwrap();
         if !v.iter().any(|_c| _c == c) {
             v.push(c.clone());
@@ -101,9 +100,11 @@ impl Mongodb {
     }
 
     #[inline]
-    async fn remove_cache(&mut self, id: String) {
-        for (_, v) in self.cache.lock().await.iter_mut() {
-            v.retain(|c| c.id.to_string() != id);
+    async fn remove_cache(&mut self, id: &str) {
+        let mut cache = self.cache.lock().await;
+
+        for (_, values) in cache.iter_mut() {
+            values.retain(|c| c.id == id);
         }
     }
 
@@ -217,7 +218,6 @@ impl crate::Plugin for Mongodb {
     async fn watch(&mut self) {
         let mut s = self.clone();
         tokio::spawn(async move {
-
             let option = ChangeStreamOptions::builder()
                 .full_document(Some(FullDocumentType::UpdateLookup))
                 .build();
@@ -246,8 +246,10 @@ impl crate::Plugin for Mongodb {
                     }
                     change_stream::event::OperationType::Delete => {
                         if let Some(c) = document_key {
-                            let id = c.get("_id").unwrap().as_object_id().unwrap().to_string();
-                            s.remove_cache(id).await;
+                            let id = c.get("_id").unwrap().to_string();
+                            if id != "" {
+                                s.remove_cache(&id).await;
+                            }
                         }
                     }
                     _ => {}
