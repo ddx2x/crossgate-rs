@@ -13,8 +13,8 @@ impl Listener {
         H: Handle,
     {
         loop {
-            if let Ok((stream, addr)) = self.listener.accept().await {
-                let mut handler = Handler {
+             let (stream, addr) = self.listener.accept().await?;
+                let  handler = Handler {
                     inner: h.clone(),
                     connection: Connection::new(stream),
                     shutdown: self.notify_shutdown.subscribe(),
@@ -25,7 +25,6 @@ impl Listener {
                         log::error!("connection client {:?} error {:?}", addr.to_string(), err);
                     }
                 });
-            }
         }
     }
 }
