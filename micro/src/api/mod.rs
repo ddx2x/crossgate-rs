@@ -35,6 +35,7 @@ pub enum IntercepterType {
     SelfHandle,
     Redirect,
     NotAuthorized,
+    Forbidden, // 403
     Interrupt, // 新增加中断，当由中间件函数处理结果
     Next,
 }
@@ -79,6 +80,12 @@ async fn intercept(
             IntercepterType::NotAuthorized => {
                 return Ok(Response::builder()
                     .status(StatusCode::UNAUTHORIZED)
+                    .body(Body::empty())
+                    .unwrap());
+            }
+            IntercepterType::Forbidden => {
+                return Ok(Response::builder()
+                    .status(StatusCode::FORBIDDEN)
                     .body(Body::empty())
                     .unwrap());
             }
