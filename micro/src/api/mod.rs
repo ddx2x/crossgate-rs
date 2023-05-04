@@ -55,6 +55,14 @@ pub fn default_serve_http(_: &Request<Body>) -> anyhow::Result<Response<Body>> {
     Ok(Response::new(Body::from(TITLE)))
 }
 
+fn extracting_service(path: &str) -> String {
+    let parts: Vec<&str> = path.split("/").collect::<Vec<&str>>().drain(1..).collect();
+    if parts.len() < 2 {
+        return String::from("");
+    }
+    format!("/{}/{}", parts[0], parts[1])
+}
+
 fn default_response() -> Response<Body> {
     Response::new(Body::from(TITLE))
 }
@@ -102,7 +110,8 @@ async fn intercept(
         return Ok(default_response());
     }
 
-    let service_name = req.uri().path().split("/").nth(1).unwrap_or("");
+    //  /t/ums/user/login => /t/ums
+    let service_name = extracting_service(req.uri().path());
 
     if service_name == "" {
         return Ok(Response::builder()
@@ -111,7 +120,7 @@ async fn intercept(
             .unwrap());
     }
 
-    let (lba, endpoint) = match register.get_service(service_name).await {
+    let (lba, endpoint) = match register.get_service(&service_name).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
             return Ok(Response::builder()
