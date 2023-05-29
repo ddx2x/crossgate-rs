@@ -13,9 +13,9 @@ pub enum LoadBalancerAlgorithm<'a> {
 impl<'a> From<String> for LoadBalancerAlgorithm<'a> {
     fn from(s: String) -> Self {
         match s.to_ascii_lowercase().as_str() {
-            "round_robin" => LoadBalancerAlgorithm::RoundRobin,
-            "random" => LoadBalancerAlgorithm::Random,
-            "strict" => LoadBalancerAlgorithm::Strict(""),
+            "RoundRobin" => LoadBalancerAlgorithm::RoundRobin,
+            "Random" => LoadBalancerAlgorithm::Random,
+            "Strict" => LoadBalancerAlgorithm::Strict(""),
             _ => LoadBalancerAlgorithm::RoundRobin, //default return rr
         }
     }
@@ -57,7 +57,7 @@ impl<'a> LoadBalancerAlgorithm<'a> {
                 }
                 return addr.to_string();
             }
-            LoadBalancerAlgorithm::Strict(_) => todo!(),
+            _ => addrs[0].clone(),
         }
     }
 }

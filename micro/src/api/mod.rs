@@ -112,12 +112,47 @@ async fn intercept(
 
     //  /t/ums/user/login => /t/ums
     let service_name = extracting_service(req.uri().path());
-
     if service_name == "" {
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body("service unavailable or not found".into())
             .unwrap());
+    }
+
+    // 如果请求头中有strict，那么直接转发到strict中
+    if let Some(strict) = req.headers().get("strict") {
+        let (lba, endpoint) = match register
+            .get_service_by_lba(
+                &service_name,
+                crate::LoadBalancerAlgorithm::Strict(strict.to_str().unwrap_or("")),
+            )
+            .await
+        {
+            Ok(endpoint) => endpoint,
+            Err(_) => {
+                return Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .unwrap());
+            }
+        };
+
+        match net::get_proxy_client()
+            .call(
+                client_ip,
+                &format!("http://{}", hash_node(lba, endpoint).await),
+                req,
+            )
+            .await
+        {
+            Ok(res) => return Ok(res),
+            Err(e) => {
+                return Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(format!("gateway error: {:#?}", e).into())
+                    .unwrap());
+            }
+        }
     }
 
     let (lba, endpoint) = match register.get_service(&service_name).await {
@@ -143,13 +178,11 @@ async fn intercept(
         .call(client_ip, &forward_addr, req)
         .await
     {
-        Ok(res) => {
-            return Ok(res);
-        }
-        Err(_) => {
+        Ok(res) => return Ok(res),
+        Err(e) => {
             return Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::empty())
+                .body(format!("gateway error: {:#?}", e).into())
                 .unwrap());
         }
     }

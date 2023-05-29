@@ -11,7 +11,7 @@ use mongodb::{
     Client, IndexModel,
 };
 
-use crate::Content;
+use crate::ServiceContent;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct MongoContent {
@@ -19,7 +19,7 @@ struct MongoContent {
     id: String,
 
     #[serde(flatten)]
-    content: Content,
+    content: ServiceContent,
 }
 
 impl PartialEq for MongoContent {
@@ -124,7 +124,7 @@ impl Mongodb {
     async fn apply<'a>(
         &self,
         id: &'a str,
-        content: &'a crate::Content,
+        content: &'a crate::ServiceContent,
     ) -> Result<(), crate::PluginError> {
         let collection = self.collecion().await;
 
@@ -148,7 +148,7 @@ impl Mongodb {
         Ok(())
     }
 
-    async fn query(&self, k: &str) -> Result<Vec<crate::Content>, crate::PluginError> {
+    async fn query(&self, k: &str) -> Result<Vec<crate::ServiceContent>, crate::PluginError> {
         let mut mcs: Vec<MongoContent> = Vec::new();
 
         if let Ok(mut cursor) = self
@@ -177,7 +177,7 @@ impl Mongodb {
         Ok(mcs.iter().map(|mc| mc.content.clone()).collect())
     }
 
-    async fn content(&mut self, c: &crate::Content) -> String {
+    async fn content(&mut self, c: &crate::ServiceContent) -> String {
         let id = ObjectId::new().to_string();
         let mut contents = self.cs.lock().await;
 
@@ -204,12 +204,12 @@ impl Mongodb {
 
 #[crate::async_trait]
 impl crate::Plugin for Mongodb {
-    async fn set(&mut self, _: &str, val: crate::Content) -> Result<(), crate::PluginError> {
+    async fn set(&mut self, _: &str, val: crate::ServiceContent) -> Result<(), crate::PluginError> {
         let id = self.content(&val).await;
         self.apply(&id, &val).await
     }
 
-    async fn get(&self, k: &str) -> Result<Vec<crate::Content>, crate::PluginError> {
+    async fn get(&self, k: &str) -> Result<Vec<crate::ServiceContent>, crate::PluginError> {
         let cache = self.cache.lock().await;
         if let Some(v) = cache.get(k) {
             return Ok(v.iter().map(|c| c.content.clone()).collect());
@@ -260,8 +260,8 @@ impl crate::Plugin for Mongodb {
         });
     }
 
-    // start renewal background
-    async fn renewal(&mut self, ctx: Context, wg: WaitGroup) {
+    // start renewal refresh background
+    async fn refresh(&mut self, ctx: Context, wg: WaitGroup) {
         let mut s = self.clone();
         let mut ctx = ctx;
 
