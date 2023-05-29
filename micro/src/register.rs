@@ -49,7 +49,7 @@ impl Register {
     pub(crate) async fn get_service_by_lba<'a>(
         &'a self,
         name: &'a str,
-        lba: crate::LoadBalancerAlgorithm<'a>,
+        lba: crate::LoadBalancerAlgorithm,
     ) -> anyhow::Result<(crate::LoadBalancerAlgorithm, crate::Endpoint), RegisterError> {
         let contents = plugin::get(name)
             .await
@@ -57,24 +57,30 @@ impl Register {
 
         let mut filter_contents = vec![];
 
-        match lba {
+        match lba.clone() {
             crate::LoadBalancerAlgorithm::RoundRobin => {
-                filter_contents = contents
-                    .iter()
-                    .filter(|item| item.lba == "RoundRobin")
-                    .collect::<Vec<&plugin::ServiceContent>>();
+                filter_contents.extend(
+                    contents
+                        .iter()
+                        .filter(|item| item.lba == "RoundRobin")
+                        .collect::<Vec<&plugin::ServiceContent>>(),
+                );
             }
             crate::LoadBalancerAlgorithm::Random => {
-                filter_contents = contents
-                    .iter()
-                    .filter(|item| item.lba == "Random")
-                    .collect::<Vec<&plugin::ServiceContent>>();
+                filter_contents.extend(
+                    contents
+                        .iter()
+                        .filter(|item| item.lba == "Random")
+                        .collect::<Vec<&plugin::ServiceContent>>(),
+                );
             }
             crate::LoadBalancerAlgorithm::Strict(v) => {
-                filter_contents = contents
-                    .iter()
-                    .filter(|item| item.lba == "Strict" && item.addr == v)
-                    .collect::<Vec<&plugin::ServiceContent>>();
+                filter_contents.extend(
+                    contents
+                        .iter()
+                        .filter(|item| item.lba == "Strict" && item.addr == v)
+                        .collect::<Vec<&plugin::ServiceContent>>(),
+                );
             }
         };
 

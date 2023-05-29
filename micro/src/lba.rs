@@ -3,25 +3,25 @@ use rand::Rng;
 pub static DEFAULT_LOAD_BALANCER_ALGORITHM: LoadBalancerAlgorithm =
     LoadBalancerAlgorithm::RoundRobin;
 
-#[derive(Debug, Clone, Copy)]
-pub enum LoadBalancerAlgorithm<'a> {
+#[derive(Debug, Clone)]
+pub enum LoadBalancerAlgorithm {
     RoundRobin,
     Random,
-    Strict(&'a str),
+    Strict(String),
 }
 
-impl<'a> From<String> for LoadBalancerAlgorithm<'a> {
+impl From<String> for LoadBalancerAlgorithm {
     fn from(s: String) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "RoundRobin" => LoadBalancerAlgorithm::RoundRobin,
             "Random" => LoadBalancerAlgorithm::Random,
-            "Strict" => LoadBalancerAlgorithm::Strict(""),
+            "Strict" => LoadBalancerAlgorithm::Strict("".into()),
             _ => LoadBalancerAlgorithm::RoundRobin, //default return rr
         }
     }
 }
 
-impl<'a> std::fmt::Display for LoadBalancerAlgorithm<'a> {
+impl std::fmt::Display for LoadBalancerAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LoadBalancerAlgorithm::RoundRobin => write!(f, "RoundRobin"),
@@ -33,7 +33,7 @@ impl<'a> std::fmt::Display for LoadBalancerAlgorithm<'a> {
 
 static mut N: usize = 0;
 
-impl<'a> LoadBalancerAlgorithm<'a> {
+impl LoadBalancerAlgorithm {
     pub async fn get(&self, addrs: &[String]) -> String {
         match self {
             LoadBalancerAlgorithm::RoundRobin => self.chioce(addrs).await,

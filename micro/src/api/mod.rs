@@ -14,7 +14,7 @@ use std::net::{IpAddr, SocketAddr};
 use crate::{Endpoint, Register};
 
 #[inline]
-async fn hash_node<'a>(lba: crate::LoadBalancerAlgorithm<'a>, endpoint: Endpoint) -> String {
+async fn hash_node<'a>(lba: crate::LoadBalancerAlgorithm, endpoint: Endpoint) -> String {
     lba.get(endpoint.get_address().as_slice()).await
 }
 
@@ -124,7 +124,7 @@ async fn intercept(
         let (lba, endpoint) = match register
             .get_service_by_lba(
                 &service_name,
-                crate::LoadBalancerAlgorithm::Strict(strict.to_str().unwrap_or("")),
+                crate::LoadBalancerAlgorithm::Strict(strict.to_str().unwrap_or("").to_string()),
             )
             .await
         {
