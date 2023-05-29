@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::{rngs::ThreadRng, Rng};
 
 pub static DEFAULT_LOAD_BALANCER_ALGORITHM: LoadBalancerAlgorithm =
     LoadBalancerAlgorithm::RoundRobin;
@@ -34,30 +34,21 @@ impl std::fmt::Display for LoadBalancerAlgorithm {
 static mut N: usize = 0;
 
 impl LoadBalancerAlgorithm {
-    pub async fn get(&self, addrs: &[String]) -> String {
-        match self {
-            LoadBalancerAlgorithm::RoundRobin => self.chioce(addrs).await,
-            LoadBalancerAlgorithm::Random => self.chioce(addrs).await,
-            LoadBalancerAlgorithm::Strict(s) => (*s).to_string(),
-        }
-    }
-
-    async fn chioce(&self, addrs: &[String]) -> String {
+    pub async fn hash(&self, addrs: &[String]) -> String {
         match self {
             LoadBalancerAlgorithm::RoundRobin => unsafe {
                 N = N + 1;
                 return addrs[(N - 1) % addrs.len()].clone();
             },
             LoadBalancerAlgorithm::Random => {
-                let mut rng = rand::thread_rng();
-                let index = rng.gen_range(0..addrs.len());
-                let addr = &addrs[index];
-                if addr.is_empty() {
-                    return "".to_string();
-                }
-                return addr.to_string();
+                return addrs[rand::thread_rng().gen_range(0..addrs.len())].to_string();
             }
-            _ => addrs[0].clone(),
+            LoadBalancerAlgorithm::Strict(s) => {
+                if !addrs.contains(s) {
+                    return "".into();
+                }
+                return s.clone();
+            }
         }
     }
 }

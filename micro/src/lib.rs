@@ -60,6 +60,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Endpoint {
     addr: Vec<String>,
 }

@@ -13,11 +13,6 @@ use std::net::{IpAddr, SocketAddr};
 
 use crate::{Endpoint, Register};
 
-#[inline]
-async fn hash_node<'a>(lba: crate::LoadBalancerAlgorithm, endpoint: Endpoint) -> String {
-    lba.get(endpoint.get_address().as_slice()).await
-}
-
 static TITLE: &str = r#"
 <html>
 <head>
@@ -78,13 +73,8 @@ async fn intercept(
         let mut res = Response::new(Body::empty());
 
         match intercepter(&mut req, &mut res).await {
-            IntercepterType::SelfHandle => {
-                let self_handle = self_handle.unwrap_or(default_serve_http);
-                return self_handle(&req);
-            }
-            IntercepterType::Redirect => {
-                break;
-            }
+            IntercepterType::SelfHandle => return self_handle.unwrap_or(default_serve_http)(&req),
+            IntercepterType::Redirect => break,
             IntercepterType::NotAuthorized => {
                 return Ok(Response::builder()
                     .status(StatusCode::UNAUTHORIZED)
@@ -97,12 +87,8 @@ async fn intercept(
                     .body(Body::empty())
                     .unwrap());
             }
-            IntercepterType::Next => {
-                continue;
-            }
-            IntercepterType::Interrupt => {
-                return Ok(res);
-            }
+            IntercepterType::Next => continue,
+            IntercepterType::Interrupt => return Ok(res),
         }
     }
 
@@ -121,10 +107,19 @@ async fn intercept(
 
     // 如果请求头中有strict，那么直接转发到strict中
     if let Some(strict) = req.headers().get("strict") {
+        let strict_address = strict.to_str().unwrap_or("").to_string();
+
+        if strict_address.is_empty() {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("strict address is empty".into())
+                .unwrap());
+        }
+
         let (lba, endpoint) = match register
             .get_service_by_lba(
                 &service_name,
-                crate::LoadBalancerAlgorithm::Strict(strict.to_str().unwrap_or("").to_string()),
+                crate::LoadBalancerAlgorithm::Strict(strict_address),
             )
             .await
         {
@@ -137,12 +132,20 @@ async fn intercept(
             }
         };
 
+        if endpoint.get_address().is_empty() {
+            return Ok(Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(format!("{} not found", service_name).into())
+                .unwrap());
+        }
+
+        let forward_addr = format!(
+            "http://{}",
+            lba.hash(endpoint.get_address().as_slice()).await
+        );
+
         match net::get_proxy_client()
-            .call(
-                client_ip,
-                &format!("http://{}", hash_node(lba, endpoint).await),
-                req,
-            )
+            .call(client_ip, &forward_addr, req)
             .await
         {
             Ok(res) => return Ok(res),
@@ -172,7 +175,10 @@ async fn intercept(
             .unwrap());
     }
 
-    let forward_addr = format!("http://{}", hash_node(lba, endpoint).await);
+    let forward_addr = format!(
+        "http://{}",
+        lba.hash(endpoint.get_address().as_slice()).await
+    );
 
     match net::get_proxy_client()
         .call(client_ip, &forward_addr, req)
