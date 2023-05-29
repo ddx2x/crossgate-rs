@@ -139,10 +139,7 @@ async fn intercept(
                 .unwrap());
         }
 
-        let forward_addr = format!(
-            "http://{}",
-            lba.hash(endpoint.get_address().as_slice()).await
-        );
+        let forward_addr = format!("http://{}", lba.hash(endpoint.get_address().as_slice()));
 
         match net::get_proxy_client()
             .call(client_ip, &forward_addr, req)
@@ -175,10 +172,7 @@ async fn intercept(
             .unwrap());
     }
 
-    let forward_addr = format!(
-        "http://{}",
-        lba.hash(endpoint.get_address().as_slice()).await
-    );
+    let forward_addr = format!("http://{}", lba.hash(endpoint.get_address().as_slice()));
 
     match net::get_proxy_client()
         .call(client_ip, &forward_addr, req)

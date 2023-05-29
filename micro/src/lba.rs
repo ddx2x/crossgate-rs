@@ -34,7 +34,7 @@ impl std::fmt::Display for LoadBalancerAlgorithm {
 static mut N: usize = 0;
 
 impl LoadBalancerAlgorithm {
-    pub async fn hash(&self, addrs: &[String]) -> String {
+    pub fn hash(&self, addrs: &[String]) -> String {
         match self {
             LoadBalancerAlgorithm::RoundRobin => unsafe {
                 N = N + 1;
