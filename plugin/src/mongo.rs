@@ -117,9 +117,7 @@ impl MongodbPlugin {
     async fn remove_cache(&mut self, id: &str) {
         let mut cache = self.cache.lock().await;
         for (_, values) in cache.iter_mut() {
-            log::info!("retain before: {:?},id: {:?}", values, id);
             values.retain(|content| content.id != id);
-            log::info!("retain after: {:?}", values);
         }
     }
 
