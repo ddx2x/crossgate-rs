@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio_context::context::Context;
 
 use mongodb::{
-    bson::{doc, oid::ObjectId},
+    bson::{doc, oid::ObjectId, Bson},
     change_stream::{self, event::ChangeStreamEvent},
     options::{ChangeStreamOptions, FindOptions, FullDocumentType, IndexOptions, UpdateOptions},
     Client, IndexModel,
@@ -117,7 +117,9 @@ impl MongodbPlugin {
     async fn remove_cache(&mut self, id: &str) {
         let mut cache = self.cache.lock().await;
         for (_, values) in cache.iter_mut() {
-            values.retain(|item| item.id != id)
+            log::info!("retain before: {:?},id: {:?}", values, id);
+            values.retain(|content| content.id != id);
+            log::info!("retain after: {:?}", values);
         }
     }
 
@@ -149,7 +151,6 @@ impl MongodbPlugin {
                     MongoContent {
                         id: id.clone().to_string(),
                         content: content.clone(),
-                        
                     },
                     None,
                 )
@@ -203,6 +204,7 @@ impl MongodbPlugin {
                 doc.content.service.clone()
             };
 
+            //init cache
             self.cache.lock().await.insert(key, vec![doc.clone()]);
 
             mongo_contents.push(doc);
@@ -313,17 +315,14 @@ impl Synchronize for MongodbPlugin {
                     | change_stream::event::OperationType::Update
                     | change_stream::event::OperationType::Replace => {
                         if let Some(c) = full_document {
-                            let key = if c.content.service.eq("") {
-                                c.id.clone()
-                            } else {
-                                c.content.service.clone()
-                            };
-                            s.update_cache(key, &c).await;
+                            s.update_cache(c.content.service.clone(), &c).await;
                         }
                     }
                     change_stream::event::OperationType::Delete => {
                         if let Some(c) = document_key {
-                            s.remove_cache(&c.get("_id").unwrap().to_string()).await;
+                            if let Ok(key) = c.get_str("_id") {
+                                s.remove_cache(&key).await;
+                            }
                         }
                     }
                     _ => {}
@@ -378,11 +377,7 @@ impl Synchronize for MongodbPlugin {
 
                 let mut stream = s.group_collection().watch(None, option).await.unwrap();
 
-                while let Ok(Some(evt)) = stream
-                    .try_next()
-                    .await
-                    .map_err(|e| log::error!("watch error :{:?}", e.to_string()))
-                {
+                while let Some(evt) = stream.try_next().await.unwrap() {
                     let ChangeStreamEvent::<MongoContent> {
                         operation_type,
                         full_document,
@@ -395,17 +390,14 @@ impl Synchronize for MongodbPlugin {
                         | change_stream::event::OperationType::Update
                         | change_stream::event::OperationType::Replace => {
                             if let Some(c) = full_document {
-                                let key = if c.content.service.eq("") {
-                                    c.id.clone()
-                                } else {
-                                    c.content.service.clone()
-                                };
-                                s.update_cache(key, &c).await;
+                                s.update_cache(c.content.service.clone(), &c).await;
                             }
                         }
                         change_stream::event::OperationType::Delete => {
                             if let Some(c) = document_key {
-                                s.remove_cache(&c.get("_id").unwrap().to_string()).await;
+                                if let Ok(key) = c.get_str("_id") {
+                                    s.remove_cache(&key).await;
+                                }
                             }
                         }
                         _ => {}
