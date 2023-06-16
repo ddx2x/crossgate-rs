@@ -1,48 +1,20 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use crossbeam::sync::WaitGroup;
-use futures::lock::Mutex;
-use std::sync::Arc;
+
+use tokio::sync::Mutex;
 use tokio_context::context::Context;
 
 mod etcd;
 use etcd::Etcd;
 
 mod mongo;
-use mongo::Mongodb;
+use mongo::MongodbPlugin;
 
 mod mdns_plugin;
 use mdns_plugin::Mdns;
 use thiserror::Error;
-
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-pub struct ServiceContent {
-    pub service: String,
-    pub lba: String,
-    pub addr: String,
-}
-
-#[derive(Debug, Error)]
-pub enum PluginError {
-    #[error("the plugin for key `{0}` is not available")]
-    Error(String),
-}
-
-#[async_trait]
-pub(crate) trait Plugin {
-    async fn set(&mut self, k: &str, sc: ServiceContent) -> anyhow::Result<(), PluginError>;
-
-    async fn get(&self, k: &str) -> anyhow::Result<Vec<ServiceContent>, PluginError>;
-
-    async fn watch(&mut self);
-
-    async fn refresh(&mut self, ctx: Context, wg: WaitGroup);
-}
-
-pub enum ServiceType {
-    ApiGateway,
-    BackendService,
-    WebService,
-}
 
 pub enum PluginType {
     Etcd,
@@ -51,7 +23,8 @@ pub enum PluginType {
 }
 
 pub fn get_plugin_type(name: &str) -> PluginType {
-    match name {
+    let name = name.to_lowercase();
+    match name.as_str() {
         "etcd" => PluginType::Etcd,
         "mdns" => PluginType::Mdns,
         &_ => PluginType::Mongodb,
@@ -68,33 +41,92 @@ impl PluginType {
     }
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+pub struct ServiceContent {
+    pub service: String,
+    pub lba: String,
+    pub addr: String,
+    pub r#type: i32, // 1:web service ,2:backend service
+}
+
+impl Default for ServiceContent {
+    fn default() -> Self {
+        ServiceContent {
+            service: "".to_string(),
+            lba: "".to_string(),
+            addr: "".to_string(),
+            r#type: 1,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum PluginError {
+    #[error("the plugin for key `{0}` is not available")]
+    Error(String),
+}
+
+#[async_trait]
+pub trait Plugin {
+    async fn register_service(
+        &self,
+        key: &str,
+        service_content: ServiceContent,
+    ) -> anyhow::Result<()>;
+
+    async fn get_web_service(&self, key: &str) -> anyhow::Result<Vec<ServiceContent>>;
+
+    async fn get_backend_service(&self, key: &str) -> anyhow::Result<(String, Vec<String>)>;
+}
+
+#[async_trait]
+pub(crate) trait Synchronize {
+    async fn cache_refresh(&mut self);
+    async fn remote_refresh(&mut self, ctx: Context, wg: WaitGroup);
+    async fn twoway_refresh(&mut self, ctx: Context, wg: WaitGroup);
+}
+
+pub enum ServiceType {
+    ApiGateway,
+    BackendService,
+    WebService,
+}
+
 use once_cell::sync::OnceCell;
 
-static PLUGIN: OnceCell<Arc<Mutex<dyn Plugin + Send + Sync + 'static>>> = OnceCell::new();
+static PLUGIN: OnceCell<Box<dyn Plugin + Send + Sync + 'static>> = OnceCell::new();
 
 #[inline]
-pub async fn init_plugin(ctx: Context, wg: WaitGroup, t: ServiceType, r#type: PluginType) {
-    let plugin: Arc<Mutex<dyn Plugin + Send + Sync + 'static>> = match r#type {
-        // PluginType::Etcd => Arc::new(Mutex::new(Etcd {})),
-        PluginType::Mongodb => Arc::new(Mutex::new(Mongodb::new().await)),
-        // _ => Arc::new(Mutex::new(Mdns {})),
+pub async fn init_plugin(
+    ctx: Context,
+    wg: WaitGroup,
+    svc_type: ServiceType,
+    r#type: PluginType,
+) -> Box<dyn Plugin + Send + Sync + 'static> {
+    let mut plugin = match r#type {
+        PluginType::Mongodb => MongodbPlugin::new().await,
         _ => panic!("not support plugin type"),
     };
 
-    match t {
+    match svc_type {
         ServiceType::ApiGateway => {
-            plugin.lock().await.watch().await;
+            plugin.cache_refresh().await;
         }
-        ServiceType::BackendService | ServiceType::WebService => {
-            plugin.lock().await.refresh(ctx, wg).await;
+        ServiceType::BackendService => {
+            plugin.twoway_refresh(ctx, wg).await;
+        }
+        ServiceType::WebService => {
+            plugin.remote_refresh(ctx, wg).await;
         }
     }
 
-    _ = PLUGIN.set(plugin);
+    _ = PLUGIN.set(Box::new(plugin.clone()));
+
+    Box::new(plugin)
 }
 
 #[inline]
-async fn get_plugin() -> &'static Arc<Mutex<dyn Plugin + Send + Sync>> {
+async fn plugin_instance() -> &'static Box<dyn Plugin + Send + Sync> {
     if PLUGIN.get().is_none() {
         panic!("plugin not init");
     }
@@ -102,11 +134,19 @@ async fn get_plugin() -> &'static Arc<Mutex<dyn Plugin + Send + Sync>> {
 }
 
 #[inline]
-pub async fn set(k: &str, val: ServiceContent) -> anyhow::Result<(), PluginError> {
-    get_plugin().await.lock().await.set(k, val).await
+pub async fn register_service(key: &str, service_content: ServiceContent) -> anyhow::Result<()> {
+    plugin_instance()
+        .await
+        .register_service(key, service_content)
+        .await
 }
 
 #[inline]
-pub async fn get(k: &str) -> anyhow::Result<Vec<crate::ServiceContent>, PluginError> {
-    get_plugin().await.lock().await.get(k).await
+pub async fn get_web_service(k: &str) -> anyhow::Result<Vec<ServiceContent>> {
+    plugin_instance().await.get_web_service(k).await
+}
+
+#[inline]
+pub async fn get_backend_service(k: &str) -> anyhow::Result<(String, Vec<String>)> {
+    plugin_instance().await.get_backend_service(k).await
 }

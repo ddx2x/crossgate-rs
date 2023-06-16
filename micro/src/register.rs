@@ -1,4 +1,8 @@
+use std::any;
+
 use thiserror::Error;
+
+use crate::{Endpoint, Executor, LoadBalancerAlgorithm, Service};
 
 #[derive(Debug, Error)]
 pub enum RegisterError {
@@ -10,7 +14,7 @@ pub enum RegisterError {
 
 static REGISTER: Register = Register {};
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct Register;
 
 impl Default for Register {
@@ -20,10 +24,7 @@ impl Default for Register {
 }
 
 impl Register {
-    pub(crate) async fn register(
-        &self,
-        service: &dyn crate::Service,
-    ) -> anyhow::Result<(), RegisterError> {
+    pub(crate) async fn register_web_service(&self, service: &dyn Service) -> anyhow::Result<()> {
         let lba = service.lab().to_string();
 
         let addr = format!(
@@ -37,21 +38,45 @@ impl Register {
                 service: name.to_string(),
                 lba: lba.clone(),
                 addr: addr.clone(),
+                r#type: 1,
             };
 
-            plugin::set(name, content)
+            plugin::register_service(name, content)
                 .await
                 .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
         }
         Ok(())
     }
 
-    pub(crate) async fn get_service_by_lba<'a>(
+    pub(crate) async fn register_backend_service(
+        &self,
+        service: &dyn Executor,
+    ) -> anyhow::Result<()> {
+        let content = plugin::ServiceContent {
+            service: service.group(),
+            r#type: 2,
+            ..Default::default()
+        };
+
+        plugin::register_service(&service.group(), content)
+            .await
+            .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn get_backend_service(&self, name: &str) -> anyhow::Result<(String, Vec<String>)> {
+        Ok(plugin::get_backend_service(name)
+            .await
+            .map_err(|_| RegisterError::ServiceError("service not found ".to_string()))?)
+    }
+
+    pub(crate) async fn get_web_service_by_lba<'a>(
         &'a self,
         name: &'a str,
-        lba: crate::LoadBalancerAlgorithm,
-    ) -> anyhow::Result<(crate::LoadBalancerAlgorithm, crate::Endpoint), RegisterError> {
-        let contents = plugin::get(name)
+        lba: LoadBalancerAlgorithm,
+    ) -> anyhow::Result<(crate::LoadBalancerAlgorithm, Endpoint)> {
+        let contents = plugin::get_web_service(name)
             .await
             .map_err(|_| RegisterError::ServiceError("service not found ".to_string()))?;
 
@@ -92,12 +117,15 @@ impl Register {
         ))
     }
 
-    pub(crate) async fn get_service(
+    pub(crate) async fn get_web_service(
         &self,
         name: &str,
-    ) -> anyhow::Result<(crate::LoadBalancerAlgorithm, crate::Endpoint), RegisterError> {
-        if let Ok(contents) = plugin::get(name).await {
-            let addrs = contents.iter().map(|c| c.addr.clone()).collect();
+    ) -> anyhow::Result<(LoadBalancerAlgorithm, Endpoint)> {
+        if let Ok(contents) = plugin::get_web_service(name).await {
+            let addrs = contents
+                .iter()
+                .map(|c: &plugin::ServiceContent| c.addr.clone())
+                .collect();
             let mut lba = "".to_string();
 
             // 如果有多个服务，那么需要按照负载均衡算法优先级选择一个，Strict优先级最高
@@ -112,8 +140,8 @@ impl Register {
             ));
         }
 
-        Err(RegisterError::ServiceError(
+        Err(anyhow::anyhow!(RegisterError::ServiceError(
             "service not found ".to_string(),
-        ))
+        )))
     }
 }

@@ -1,7 +1,6 @@
-use std::net::SocketAddr;
-
 use crossbeam::sync::WaitGroup;
 use futures::future::BoxFuture;
+use std::net::SocketAddr;
 use tokio_context::context::Context;
 
 pub type ServerRunFn = for<'a> fn(addr: &'a SocketAddr) -> BoxFuture<'a, ()>;

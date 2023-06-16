@@ -117,7 +117,7 @@ async fn intercept(
         }
 
         let (lba, endpoint) = match register
-            .get_service_by_lba(
+            .get_web_service_by_lba(
                 &service_name,
                 crate::LoadBalancerAlgorithm::Strict(strict_address),
             )
@@ -155,7 +155,7 @@ async fn intercept(
         }
     }
 
-    let (lba, endpoint) = match register.get_service(&service_name).await {
+    let (lba, endpoint) = match register.get_web_service(&service_name).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
             return Ok(Response::builder()

@@ -11,11 +11,11 @@ use mongodb::{
     Client, IndexModel,
 };
 
-use crate::ServiceContent;
+use crate::{Plugin, ServiceContent, Synchronize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct MongoContent {
-    #[serde(alias = "_id")]
+    #[serde(rename(serialize = "_id", deserialize = "_id"))]
     id: String,
 
     #[serde(flatten)]
@@ -32,13 +32,18 @@ static SCHEMA_NAME: &str = "crossgate";
 static COLLECTION_NAME: &str = "discovery";
 
 #[derive(Debug, Clone)]
-pub struct Mongodb {
-    cs: Arc<Mutex<Vec<MongoContent>>>,
+pub struct MongodbPlugin {
+    inner: Arc<Mutex<Vec<MongoContent>>>,
+
     cache: Arc<Mutex<HashMap<String, Vec<MongoContent>>>>,
+
+    schema: String,
+    collection: String,
+
     client: Client,
 }
 
-impl Mongodb {
+impl MongodbPlugin {
     pub(crate) async fn new() -> Self {
         dotenv::dotenv().ok();
         let uri = std::env::var("REGISTER_ADDR").expect("REGISTER_ADDR is not set");
@@ -54,8 +59,12 @@ impl Mongodb {
         };
 
         let mut s = Self {
-            cs: Arc::new(Mutex::new(vec![])),
+            inner: Arc::new(Mutex::new(vec![])),
             cache: Arc::new(Mutex::new(HashMap::new())),
+
+            schema: SCHEMA_NAME.to_string(),
+            collection: COLLECTION_NAME.to_string(),
+
             client,
         };
 
@@ -66,134 +75,170 @@ impl Mongodb {
 
     #[inline]
     async fn init(&mut self) {
-        let collection = self.collecion().await;
-
-        let mut index_options = IndexOptions::default();
-        index_options.expire_after = Some(std::time::Duration::from_secs(2));
-
-        let index_model = IndexModel::builder()
-            .keys(doc! { "time":1, })
-            .options(index_options)
-            .build();
-
-        let _ = collection.create_index(index_model, None).await;
+        let _ = self
+            .group_collection()
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "time":1, })
+                    .options(
+                        IndexOptions::builder()
+                            .expire_after(std::time::Duration::from_secs(2))
+                            .build(),
+                    )
+                    .build(),
+                None,
+            )
+            .await;
     }
 
     #[inline]
-    async fn collecion(&self) -> mongodb::Collection<MongoContent> {
+    fn group_collection(&self) -> mongodb::Collection<MongoContent> {
         self.client
-            .database(SCHEMA_NAME)
-            .collection(COLLECTION_NAME)
+            .database(&self.schema)
+            .collection(&self.collection)
     }
 
     #[inline]
-    async fn update_cache(&mut self, service: String, c: &MongoContent) {
+    async fn update_cache(&mut self, key: String, c: &MongoContent) {
         let mut cache = self.cache.lock().await;
-        if !cache.contains_key(&service) {
-            cache.insert(service, vec![c.clone()]);
+        if !cache.contains_key(&key) {
+            cache.insert(key, vec![c.clone()]);
             return;
         }
-        let v = cache.get_mut(&service).unwrap();
-        if !v.iter().any(|_c| _c.ne(c)) {
-            v.push(c.clone());
+
+        if let Some(v) = cache.get_mut(&key) {
+            if !v.iter().any(|mc: &MongoContent| mc.ne(c)) {
+                v.push(c.clone());
+            }
         }
     }
 
     #[inline]
     async fn remove_cache(&mut self, id: &str) {
         let mut cache = self.cache.lock().await;
-
         for (_, values) in cache.iter_mut() {
-            if let Some(index) = values.iter().position(|x| x.id.ne(id)) {
-                values.remove(index);
-            }
+            values.retain(|item| item.id != id)
         }
     }
 
     #[inline]
-    async fn renewal(&mut self) {
-        let contents = self.cs.lock().await;
+    async fn service_content_renewal(&mut self) {
+        let contents = self.inner.lock().await;
         for c in contents.clone().iter() {
             let id = c.id.clone();
-            if let Err(e) = self.apply(&id, &c.content).await {
+            if let Err(e) = self.service_content_apply(&id, &c.content).await {
                 log::error!("{:?}", e);
             }
         }
     }
 
-    async fn apply<'a>(
+    async fn service_content_apply(
         &self,
-        id: &'a str,
-        content: &'a crate::ServiceContent,
-    ) -> Result<(), crate::PluginError> {
-        let collection = self.collecion().await;
-
-        collection
-            .update_one(
-                doc! {"service": content.service.clone(), "addr": &content.addr},
-                doc! {"$set":
-                    {
-                    "_id" : id,
-                    "service": content.service.clone(),
-                    "lba": content.lba.clone(),
-                    "addr": &content.addr,
-                    "time": mongodb::bson::DateTime::now(),
+        id: &str,
+        content: &ServiceContent,
+    ) -> anyhow::Result<()> {
+        if self
+            .group_collection()
+            .count_documents(doc! {"_id":id}, None)
+            .await?
+            == 0
+        {
+            let _ = self
+                .group_collection()
+                .insert_one(
+                    MongoContent {
+                        id: id.clone().to_string(),
+                        content: content.clone(),
+                        
                     },
-                },
-                UpdateOptions::builder().upsert(true).build(),
-            )
-            .await
-            .map_err(|e| crate::PluginError::Error(e.to_string()))?;
+                    None,
+                )
+                .await
+                .map_err(|e| crate::PluginError::Error(e.to_string()))?;
+        } else {
+            self.group_collection()
+                .update_one(
+                    doc! {
+                        "_id":id,
+                    },
+                    doc! {
+                        "$set":
+                        {
+                            "time": mongodb::bson::DateTime::now(),
+                        },
+                    },
+                    UpdateOptions::builder().upsert(false).build(),
+                )
+                .await
+                .map_err(|e| crate::PluginError::Error(e.to_string()))?;
+        }
 
         Ok(())
     }
 
-    async fn query(&self, k: &str) -> Result<Vec<crate::ServiceContent>, crate::PluginError> {
-        let mut mcs: Vec<MongoContent> = Vec::new();
+    async fn list_mongo_content(
+        &self,
+        key: String,
+        r#type: i32,
+    ) -> anyhow::Result<Vec<MongoContent>> {
+        let mut mongo_contents: Vec<MongoContent> = vec![];
 
-        if let Ok(mut cursor) = self
-            .collecion()
-            .await
+        let mut cursor = self
+            .group_collection()
             .find(
-                doc! { "service": k.to_string() },
+                doc! { "service": key.to_string(),"type": r#type },
                 FindOptions::builder().sort(doc! { "time": -1 }).build(),
             )
             .await
-            .map_err(|e| crate::PluginError::Error(e.to_string()))
+            .map_err(|e| crate::PluginError::Error(e.to_string()))?;
+
+        while let Some(doc) = cursor
+            .try_next()
+            .await
+            .map_err(|e| crate::PluginError::Error(e.to_string()))?
         {
-            while let Ok(Some(doc)) = cursor
-                .try_next()
-                .await
-                .map_err(|e| log::error!("query decode error :{:?}", e.to_string()))
-            {
-                self.cache
-                    .lock()
-                    .await
-                    .insert(doc.content.service.clone(), vec![doc.clone()]);
-                mcs.push(doc);
-            }
+            let key = if doc.content.service.eq("") {
+                doc.id.clone()
+            } else {
+                doc.content.service.clone()
+            };
+
+            self.cache.lock().await.insert(key, vec![doc.clone()]);
+
+            mongo_contents.push(doc);
         }
 
-        Ok(mcs.iter().map(|mc| mc.content.clone()).collect())
+        Ok(mongo_contents)
     }
 
-    async fn content(&mut self, c: &crate::ServiceContent) -> String {
-        let id = ObjectId::new().to_string();
-        let mut contents = self.cs.lock().await;
+    async fn list_service_content(
+        &self,
+        key: &str,
+        r#type: i32,
+    ) -> anyhow::Result<Vec<ServiceContent>> {
+        let mongo_contents = self.list_mongo_content(key.to_string(), r#type).await?;
 
-        contents.push(MongoContent {
+        Ok(mongo_contents
+            .iter()
+            .map(|mc| mc.content.clone())
+            .collect::<Vec<ServiceContent>>())
+    }
+
+    async fn mongo_content_builder(&self, content: &ServiceContent) -> String {
+        let id = ObjectId::new().to_string();
+
+        self.inner.lock().await.push(MongoContent {
             id: id.clone(),
-            content: c.clone(),
+            content: content.clone(),
         });
 
         id
     }
 
-    async fn unset(&mut self) {
-        let contents = self.cs.lock().await;
+    async fn service_unset(&mut self) {
+        let contents = self.inner.lock().await;
         for c in contents.iter() {
-            self.collecion()
-                .await
+            self.group_collection()
                 .delete_one(doc! {"_id":c.id.clone()}, None)
                 .await
                 .map_err(|e| log::error!("unset service {:?}", e))
@@ -203,28 +248,53 @@ impl Mongodb {
 }
 
 #[crate::async_trait]
-impl crate::Plugin for Mongodb {
-    async fn set(&mut self, _: &str, val: crate::ServiceContent) -> Result<(), crate::PluginError> {
-        let id = self.content(&val).await;
-        self.apply(&id, &val).await
+impl Plugin for MongodbPlugin {
+    async fn register_service(&self, _: &str, val: ServiceContent) -> anyhow::Result<()> {
+        self.service_content_apply(&self.mongo_content_builder(&val).await, &val)
+            .await
     }
 
-    async fn get(&self, k: &str) -> Result<Vec<crate::ServiceContent>, crate::PluginError> {
-        let cache = self.cache.lock().await;
-        if let Some(v) = cache.get(k) {
-            return Ok(v.iter().map(|c| c.content.clone()).collect());
+    async fn get_web_service(&self, k: &str) -> anyhow::Result<Vec<ServiceContent>> {
+        if let Some(v) = self.cache.lock().await.get(k) {
+            return Ok(v
+                .iter()
+                .map(|item| item.content.clone())
+                .collect::<Vec<ServiceContent>>());
         }
-        self.query(k).await
+        self.list_service_content(k, 1).await
     }
 
-    async fn watch(&mut self) {
+    async fn get_backend_service(&self, k: &str) -> anyhow::Result<(String, Vec<String>)> {
+        let mut self_id: String = "".into();
+        let inner = self.inner.lock().await;
+        if let Some(v) = inner.iter().find(|c| c.content.service.eq(k)) {
+            self_id = v.id.clone();
+        }
+
+        if let Some(v) = self.cache.lock().await.get(k) {
+            return Ok((self_id, v.iter().map(|item| item.id.clone()).collect()));
+        }
+
+        let results = self.list_mongo_content(k.to_string(), 2).await?;
+
+        Ok((
+            self_id,
+            results.iter().map(|item| item.id.clone()).collect(),
+        ))
+    }
+}
+
+#[crate::async_trait]
+impl Synchronize for MongodbPlugin {
+    async fn cache_refresh(&mut self) {
         let mut s = self.clone();
-        tokio::spawn(async move {
+
+        let block = async move {
             let option = ChangeStreamOptions::builder()
                 .full_document(Some(FullDocumentType::UpdateLookup))
                 .build();
 
-            let mut stream = s.collecion().await.watch(None, option).await.unwrap();
+            let mut stream = s.group_collection().watch(None, option).await.unwrap();
 
             while let Ok(Some(evt)) = stream
                 .try_next()
@@ -243,25 +313,29 @@ impl crate::Plugin for Mongodb {
                     | change_stream::event::OperationType::Update
                     | change_stream::event::OperationType::Replace => {
                         if let Some(c) = full_document {
-                            s.update_cache(c.content.service.clone(), &c).await;
+                            let key = if c.content.service.eq("") {
+                                c.id.clone()
+                            } else {
+                                c.content.service.clone()
+                            };
+                            s.update_cache(key, &c).await;
                         }
                     }
                     change_stream::event::OperationType::Delete => {
                         if let Some(c) = document_key {
-                            let id = c.get("_id").unwrap().to_string();
-                            if id != "" {
-                                s.remove_cache(&id).await;
-                            }
+                            s.remove_cache(&c.get("_id").unwrap().to_string()).await;
                         }
                     }
                     _ => {}
                 }
             }
-        });
+        };
+
+        tokio::spawn(block);
     }
 
     // start renewal refresh background
-    async fn refresh(&mut self, ctx: Context, wg: WaitGroup) {
+    async fn remote_refresh(&mut self, ctx: Context, wg: WaitGroup) {
         let mut s = self.clone();
         let mut ctx = ctx;
 
@@ -269,16 +343,85 @@ impl crate::Plugin for Mongodb {
             let block = async {
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    s.renewal().await;
+                    s.service_content_renewal().await;
                 }
             };
             tokio::select! {
                 _ = block => {},
                 _ = ctx.done() => {
-                    s.unset().await;
+                    s.service_unset().await;
                     drop(wg.clone());
                 },
             }
         });
+    }
+
+    async fn twoway_refresh(&mut self, ctx: Context, wg: WaitGroup) {
+        let mongodb = self.clone();
+        let mut ctx = ctx;
+        let mut _self = self.clone();
+
+        let block = async move {
+            let mut s = mongodb.clone();
+            let block0 = async {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    s.service_content_renewal().await;
+                }
+            };
+
+            let mut s = mongodb.clone();
+            let block1 = async move {
+                let option = ChangeStreamOptions::builder()
+                    .full_document(Some(FullDocumentType::UpdateLookup))
+                    .build();
+
+                let mut stream = s.group_collection().watch(None, option).await.unwrap();
+
+                while let Ok(Some(evt)) = stream
+                    .try_next()
+                    .await
+                    .map_err(|e| log::error!("watch error :{:?}", e.to_string()))
+                {
+                    let ChangeStreamEvent::<MongoContent> {
+                        operation_type,
+                        full_document,
+                        document_key,
+                        ..
+                    } = evt;
+
+                    match operation_type {
+                        change_stream::event::OperationType::Insert
+                        | change_stream::event::OperationType::Update
+                        | change_stream::event::OperationType::Replace => {
+                            if let Some(c) = full_document {
+                                let key = if c.content.service.eq("") {
+                                    c.id.clone()
+                                } else {
+                                    c.content.service.clone()
+                                };
+                                s.update_cache(key, &c).await;
+                            }
+                        }
+                        change_stream::event::OperationType::Delete => {
+                            if let Some(c) = document_key {
+                                s.remove_cache(&c.get("_id").unwrap().to_string()).await;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            };
+            tokio::select! {
+                _ = block0 => {},
+                _ = block1 => {},
+                _ = ctx.done() => {
+                    _self.service_unset().await;
+                    drop(wg.clone());
+                },
+            }
+        };
+
+        tokio::spawn(block);
     }
 }

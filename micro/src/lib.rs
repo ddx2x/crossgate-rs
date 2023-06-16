@@ -3,6 +3,7 @@
 mod api;
 mod lba;
 mod register;
+mod task;
 mod web;
 
 pub use register::Register;
@@ -12,6 +13,10 @@ use std::net::SocketAddr;
 
 pub use api::{run as run_api_server, Intercepter, IntercepterType};
 pub use lba::*;
+
+pub use task::backend_service_run;
+pub use task::Executor;
+
 pub use web::web_service_run;
 
 #[derive(Debug)]
@@ -90,11 +95,21 @@ where
         )
     );
 
-    let r = register::Register::default();
-
-    if let Err(e) = r.register(&s).await {
+    if let Err(e) = register::Register::default().register_web_service(&s).await {
         panic!("register service {} error {:?}", s.name(), e);
     }
 
     return s;
+}
+
+pub async fn make_executor<T>(s: T) -> (T, Register)
+where
+    T: Executor,
+{
+    let register = register::Register::default();
+    if let Err(e) = register.register_backend_service(&s).await {
+        panic!("register backend service {} error {:?}", s.group(), e);
+    }
+
+    return (s, register);
 }
