@@ -186,7 +186,7 @@ impl MongodbPlugin {
             .group_collection()
             .find(
                 doc! { "service": key.to_string(),"type": r#type },
-                FindOptions::builder().sort(doc! { "time": -1 }).build(),
+                FindOptions::builder().sort(doc! { "_id": -1 }).build(),
             )
             .await
             .map_err(|e| crate::PluginError::Error(e.to_string()))?;
@@ -275,12 +275,16 @@ impl Plugin for MongodbPlugin {
             return Ok((self_id, v.iter().map(|item| item.id.clone()).collect()));
         }
 
-        let results = self.list_mongo_content(k.to_string(), 2).await?;
+        let mut results = self
+            .list_mongo_content(k.to_string(), 2)
+            .await?
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<String>>();
 
-        Ok((
-            self_id,
-            results.iter().map(|item| item.id.clone()).collect(),
-        ))
+        results.sort();
+
+        Ok((self_id, results))
     }
 }
 
