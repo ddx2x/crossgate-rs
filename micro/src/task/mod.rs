@@ -4,13 +4,22 @@ use futures::future::BoxFuture;
 
 use tokio_context::context::Context;
 
-pub trait Executor {
+pub trait Executor<'a> {
     fn group(&self) -> String; // register group name
 
-    fn start<'a>(&self, ctx: Context, register: &'a Register) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn start<'b>(
+        &'a mut self,
+        ctx: Context,
+        register: &'b Register,
+    ) -> BoxFuture<'b, anyhow::Result<()>>
+    where
+        'a: 'b;
 }
 
-pub async fn backend_service_run(e: impl Executor, p: plugin::PluginType) {
+pub async fn backend_service_run<'a, T>(e: &'a mut T, p: plugin::PluginType)
+where
+    T: Executor<'a> + Send + Sync + 'a,
+{
     let (_, mut h) = Context::new();
     let wg = WaitGroup::new();
 

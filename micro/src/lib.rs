@@ -17,7 +17,7 @@ pub use lba::*;
 pub use task::backend_service_run;
 pub use task::Executor;
 
-pub use web::web_service_run;
+pub use web::{web_service_run, ServerRunFn};
 
 #[derive(Debug)]
 pub enum ServiceError {
@@ -102,12 +102,12 @@ where
     return s;
 }
 
-pub async fn make_executor<T>(s: T) -> (T, Register)
+pub async fn make_executor<'a, T>(s: &mut T) -> (&mut T, Register)
 where
-    T: Executor,
+    T: Executor<'a>,
 {
     let register = register::Register::default();
-    if let Err(e) = register.register_backend_service(&s).await {
+    if let Err(e) = register.register_backend_service(s).await {
         panic!("register backend service {} error {:?}", s.group(), e);
     }
 

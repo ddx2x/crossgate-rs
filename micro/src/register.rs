@@ -1,8 +1,5 @@
-use std::any;
-
-use thiserror::Error;
-
 use crate::{Endpoint, Executor, LoadBalancerAlgorithm, Service};
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RegisterError {
@@ -48,9 +45,9 @@ impl Register {
         Ok(())
     }
 
-    pub(crate) async fn register_backend_service(
+    pub(crate) async fn register_backend_service<'a>(
         &self,
-        service: &dyn Executor,
+        service: &mut dyn Executor<'a>,
     ) -> anyhow::Result<()> {
         let content = plugin::ServiceContent {
             service: service.group(),

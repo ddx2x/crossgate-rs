@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use crossbeam::sync::WaitGroup;
 
+use mongodb::bson::de;
 use tokio::sync::Mutex;
 use tokio_context::context::Context;
 
@@ -16,6 +17,7 @@ mod mdns_plugin;
 use mdns_plugin::Mdns;
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginType {
     Etcd,
     Mongodb,
