@@ -12,6 +12,7 @@ use mongodb::{
 };
 
 use crate::{Plugin, ServiceContent, Synchronize};
+use async_trait::async_trait;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct MongoContent {
@@ -44,7 +45,7 @@ pub struct MongodbPlugin {
 }
 
 impl MongodbPlugin {
-    pub(crate) async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         dotenv::dotenv().ok();
         let uri = std::env::var("REGISTER_ADDR").expect("REGISTER_ADDR is not set");
 
@@ -247,7 +248,7 @@ impl MongodbPlugin {
     }
 }
 
-#[crate::async_trait]
+#[async_trait]
 impl Plugin for MongodbPlugin {
     async fn register_service(&self, _: &str, val: ServiceContent) -> anyhow::Result<()> {
         self.service_content_apply(&self.mongo_content_builder(&val).await, &val)

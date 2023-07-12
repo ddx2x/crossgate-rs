@@ -63,9 +63,11 @@ impl Register {
     }
 
     pub async fn get_backend_service(&self, name: &str) -> anyhow::Result<(String, Vec<String>)> {
-        Ok(plugin::get_backend_service(name)
+        let (id, mut ids) = plugin::get_backend_service(name)
             .await
-            .map_err(|_| RegisterError::ServiceError("service not found ".to_string()))?)
+            .map_err(|_| RegisterError::ServiceError("service not found ".to_string()))?;
+        ids.sort();
+        Ok((id, ids.to_owned()))
     }
 
     pub(crate) async fn get_web_service_by_lba<'a>(

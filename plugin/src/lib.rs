@@ -1,10 +1,6 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use crossbeam::sync::WaitGroup;
-
-use mongodb::bson::de;
-use tokio::sync::Mutex;
+use std::mem;
 use tokio_context::context::Context;
 
 mod etcd;
@@ -13,12 +9,17 @@ use etcd::Etcd;
 mod mongo;
 use mongo::MongodbPlugin;
 
+mod none;
+use none::NonePlugin;
+
 mod mdns_plugin;
 use mdns_plugin::Mdns;
+
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginType {
+    None,
     Etcd,
     Mongodb,
     Mdns,
@@ -27,6 +28,7 @@ pub enum PluginType {
 pub fn get_plugin_type(name: &str) -> PluginType {
     let name = name.to_lowercase();
     match name.as_str() {
+        "none" => PluginType::None, // "none" => PluginType::None,
         "etcd" => PluginType::Etcd,
         "mdns" => PluginType::Mdns,
         &_ => PluginType::Mongodb,
@@ -36,6 +38,7 @@ pub fn get_plugin_type(name: &str) -> PluginType {
 impl PluginType {
     pub fn as_str(&self) -> &'static str {
         match self {
+            PluginType::None => "none",
             PluginType::Etcd => "etcd",
             PluginType::Mongodb => "mongodb",
             PluginType::Mdns => "mdns",
@@ -69,7 +72,14 @@ pub enum PluginError {
 }
 
 #[async_trait]
-pub trait Plugin {
+pub trait Synchronize {
+    async fn cache_refresh(&mut self);
+    async fn remote_refresh(&mut self, ctx: Context, wg: WaitGroup);
+    async fn twoway_refresh(&mut self, ctx: Context, wg: WaitGroup);
+}
+
+#[async_trait]
+pub trait Plugin: Synchronize {
     async fn register_service(
         &self,
         key: &str,
@@ -79,13 +89,6 @@ pub trait Plugin {
     async fn get_web_service(&self, key: &str) -> anyhow::Result<Vec<ServiceContent>>;
 
     async fn get_backend_service(&self, key: &str) -> anyhow::Result<(String, Vec<String>)>;
-}
-
-#[async_trait]
-pub(crate) trait Synchronize {
-    async fn cache_refresh(&mut self);
-    async fn remote_refresh(&mut self, ctx: Context, wg: WaitGroup);
-    async fn twoway_refresh(&mut self, ctx: Context, wg: WaitGroup);
 }
 
 pub enum ServiceType {
@@ -99,18 +102,15 @@ use once_cell::sync::OnceCell;
 static PLUGIN: OnceCell<Box<dyn Plugin + Send + Sync + 'static>> = OnceCell::new();
 
 #[inline]
-pub async fn init_plugin(
-    ctx: Context,
-    wg: WaitGroup,
-    svc_type: ServiceType,
-    r#type: PluginType,
-) -> Box<dyn Plugin + Send + Sync + 'static> {
-    let mut plugin = match r#type {
-        PluginType::Mongodb => MongodbPlugin::new().await,
+pub async fn init_plugin(ctx: Context, wg: WaitGroup, st: ServiceType, pt: PluginType) {
+    let mut plugin: Box<dyn Plugin + Send + Sync + 'static> = match pt {
+        PluginType::Mongodb => Box::new(MongodbPlugin::new().await),
+        PluginType::None => Box::new(NonePlugin::new().await),
         _ => panic!("not support plugin type"),
     };
 
-    match svc_type {
+    // async task run...
+    match st {
         ServiceType::ApiGateway => {
             plugin.cache_refresh().await;
         }
@@ -122,9 +122,9 @@ pub async fn init_plugin(
         }
     }
 
-    _ = PLUGIN.set(Box::new(plugin.clone()));
+    let _ = PLUGIN.set(plugin);
 
-    Box::new(plugin)
+    log::info!("plugin init success");
 }
 
 #[inline]
