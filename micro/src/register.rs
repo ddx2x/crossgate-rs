@@ -26,11 +26,11 @@ impl Register {
 
         dotenv::dotenv().ok();
 
-        if service.addr().ip().is_loopback() {
-            panic!("service address is loopback");
-        }
-
-        let mut addr = service.addr().to_string();
+        let mut addr = format!(
+            "{}:{}",
+            local_ip_address::local_ip()?,
+            service.addr().port()
+        );
 
         let strict_address = ::std::env::var("STRICT").unwrap_or("".to_string());
 
