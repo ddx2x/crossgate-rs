@@ -37,6 +37,12 @@ pub trait Service: Sync + Send {
     fn addr(&self) -> SocketAddr;
 
     fn lab(&self) -> LoadBalancerAlgorithm {
+        dotenv::dotenv().ok();
+        // if env STRICT is set, return strict
+        let strict_address = ::std::env::var("STRICT").unwrap_or_else(|_| "".to_string());
+        if !strict_address.is_empty() {
+            return LoadBalancerAlgorithm::Strict(strict_address);
+        }
         return LoadBalancerAlgorithm::RoundRobin;
     }
 }
@@ -80,21 +86,6 @@ pub async fn make_service<T>(s: T) -> T
 where
     T: Service,
 {
-    let addr = s.addr();
-    if addr.ip().is_loopback() {
-        panic!("service address is loopback");
-    }
-
-    log::info!(
-        "registry service is {} ip {}",
-        s.name(),
-        format!(
-            "{}:{}",
-            local_ip_address::local_ip().unwrap(),
-            s.addr().port()
-        )
-    );
-
     if let Err(e) = register::Register::default().register_web_service(&s).await {
         panic!("register service {} error {:?}", s.name(), e);
     }

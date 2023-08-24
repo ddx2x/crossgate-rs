@@ -24,10 +24,25 @@ impl Register {
     pub(crate) async fn register_web_service(&self, service: &dyn Service) -> anyhow::Result<()> {
         let lba = service.lab().to_string();
 
-        let addr = format!(
-            "{}:{}",
-            local_ip_address::local_ip().unwrap(),
-            service.addr().port()
+        dotenv::dotenv().ok();
+
+        if service.addr().ip().is_loopback() {
+            panic!("service address is loopback");
+        }
+
+        let mut addr = service.addr().to_string();
+
+        let strict_address = ::std::env::var("STRICT").unwrap_or("".to_string());
+
+        if !strict_address.is_empty() {
+            addr = strict_address
+        }
+
+        log::info!(
+            "registry web service is {} ip {} lba {}",
+            service.name(),
+            addr,
+            service.lab()
         );
 
         for name in service.name().split(',').collect::<Vec<&str>>() {
