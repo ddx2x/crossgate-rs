@@ -1,6 +1,7 @@
 use crate::{make_executor, Register};
 use crossbeam::sync::WaitGroup;
 use futures::future::BoxFuture;
+use plugin::PluginType;
 
 use tokio_context::context::Context;
 
@@ -16,7 +17,7 @@ pub trait Executor<'a> {
         'a: 'b;
 }
 
-pub async fn backend_service_run<'a, T>(e: &'a mut T, p: plugin::PluginType)
+pub async fn backend_service_run<'a, T>(e: &'a mut T, p: PluginType)
 where
     T: Executor<'a> + Send + Sync + 'a,
 {

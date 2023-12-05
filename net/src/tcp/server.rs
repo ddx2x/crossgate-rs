@@ -19,5 +19,4 @@ pub async fn run<'a>(listener: TcpListener, h: impl Handle, shutdown: impl Futur
     // let Listener {
     //     notify_shutdown, ..
     // } = server;
-
 }

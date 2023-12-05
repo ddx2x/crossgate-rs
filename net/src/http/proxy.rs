@@ -1,8 +1,9 @@
+use hyper::client::connect::Connect;
 use hyper::header::{HeaderMap, HeaderName, HeaderValue, HOST};
 use hyper::http::header::{InvalidHeaderValue, ToStrError};
 use hyper::http::uri::InvalidUri;
 use hyper::upgrade::OnUpgrade;
-use hyper::{Body, Client, Error, Request, Response, StatusCode};
+use hyper::{body::Body, Client, Error, Request, Response, StatusCode};
 use lazy_static::lazy_static;
 use std::net::IpAddr;
 use tokio::io::copy_bidirectional;
@@ -239,7 +240,7 @@ async fn create_proxied_request<B>(
     Ok(request)
 }
 
-pub async fn call<'a, T: hyper::client::connect::Connect + Clone + Send + Sync + 'static>(
+pub async fn call<'a, T: Connect + Clone + Send + Sync + 'static>(
     client_ip: IpAddr,
     forward_uri: &str,
     mut request: Request<Body>,
@@ -255,7 +256,7 @@ pub async fn call<'a, T: hyper::client::connect::Connect + Clone + Send + Sync +
         request_upgrade_type.as_ref(),
     )
     .await?;
-    
+
     let mut response = client.request(proxied_request).await?;
 
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {
@@ -296,11 +297,11 @@ pub async fn call<'a, T: hyper::client::connect::Connect + Clone + Send + Sync +
 }
 
 #[derive(Clone)]
-pub struct ReverseProxy<T: hyper::client::connect::Connect + Clone + Send + Sync + 'static> {
+pub struct ReverseProxy<T: Connect + Clone + Send + Sync + 'static> {
     client: Client<T>,
 }
 
-impl<T: hyper::client::connect::Connect + Clone + Send + Sync + 'static> ReverseProxy<T> {
+impl<T: Connect + Clone + Send + Sync + 'static> ReverseProxy<T> {
     pub fn new(client: Client<T>) -> Self {
         Self { client }
     }
