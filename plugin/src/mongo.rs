@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio_context::context::Context;
 
+use crate::async_trait;
 use mongodb::{
-    bson::{doc, oid::ObjectId, Bson},
+    bson::{doc, oid::ObjectId},
     change_stream::{self, event::ChangeStreamEvent},
     options::{ChangeStreamOptions, FindOptions, FullDocumentType, IndexOptions, UpdateOptions},
     Client, IndexModel,
 };
 
 use crate::{Plugin, ServiceContent, Synchronize};
-use async_trait::async_trait;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct MongoContent {
@@ -148,7 +148,7 @@ impl MongodbPlugin {
                 .group_collection()
                 .insert_one(
                     MongoContent {
-                        id: id.clone().to_string(),
+                        id: id.to_string(),
                         content: content.clone(),
                     },
                     None,
@@ -289,9 +289,9 @@ impl Plugin for MongodbPlugin {
     }
 }
 
-#[crate::async_trait]
+#[async_trait]
 impl Synchronize for MongodbPlugin {
-    async fn cache_refresh(&mut self) {
+    async fn gateway_service_handle(&mut self) {
         let mut s = self.clone();
 
         let block = async move {
@@ -336,8 +336,7 @@ impl Synchronize for MongodbPlugin {
         tokio::spawn(block);
     }
 
-    // start renewal refresh background
-    async fn remote_refresh(&mut self, ctx: Context, wg: WaitGroup) {
+    async fn web_service_handle(&mut self, ctx: Context, wg: WaitGroup) {
         let mut s = self.clone();
         let mut ctx = ctx;
 
@@ -358,7 +357,7 @@ impl Synchronize for MongodbPlugin {
         });
     }
 
-    async fn twoway_refresh(&mut self, ctx: Context, wg: WaitGroup) {
+    async fn backend_service_handle(&mut self, ctx: Context, wg: WaitGroup) {
         let mongodb = self.clone();
         let mut ctx = ctx;
         let mut _self = self.clone();

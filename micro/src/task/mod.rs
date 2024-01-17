@@ -1,7 +1,8 @@
 use crate::{make_executor, Register};
 use crossbeam::sync::WaitGroup;
 use futures::future::BoxFuture;
-use plugin::PluginType;
+use plugin::get_plugin_type;
+use plugin::PluginType::Mongodb;
 
 use tokio_context::context::Context;
 
@@ -17,18 +18,20 @@ pub trait Executor<'a> {
         'a: 'b;
 }
 
-pub async fn backend_service_run<'a, T>(e: &'a mut T, p: PluginType)
+pub async fn backend_service_run<'a, T>(e: &'a mut T)
 where
     T: Executor<'a> + Send + Sync + 'a,
 {
     let (_, mut h) = Context::new();
     let wg = WaitGroup::new();
 
+    let t = ::std::env::var("REGISTER_TYPE").unwrap_or_else(|_| Mongodb.as_str().into());
+
     let _ = plugin::init_plugin(
         h.spawn_ctx(),
         wg.clone(),
         plugin::ServiceType::BackendService,
-        p,
+        get_plugin_type(&t),
     )
     .await;
 

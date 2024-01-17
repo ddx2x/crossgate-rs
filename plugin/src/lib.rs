@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use crossbeam::sync::WaitGroup;
-use std::mem;
+
 use tokio_context::context::Context;
 
 mod etcd;
-use etcd::Etcd;
+use etcd::EtcdPlugin;
 
 mod mongo;
 use mongo::MongodbPlugin;
@@ -13,7 +13,9 @@ mod none;
 use none::NonePlugin;
 
 mod mdns_plugin;
-use mdns_plugin::Mdns;
+
+mod consul;
+use consul::ConsulPlugin;
 
 use thiserror::Error;
 
@@ -23,6 +25,7 @@ pub enum PluginType {
     Etcd,
     Mongodb,
     Mdns,
+    Consul,
 }
 
 pub fn get_plugin_type(name: &str) -> PluginType {
@@ -31,6 +34,7 @@ pub fn get_plugin_type(name: &str) -> PluginType {
         "none" => PluginType::None, // "none" => PluginType::None,
         "etcd" => PluginType::Etcd,
         "mdns" => PluginType::Mdns,
+        "consul" => PluginType::Consul,
         &_ => PluginType::Mongodb,
     }
 }
@@ -42,6 +46,7 @@ impl PluginType {
             PluginType::Etcd => "etcd",
             PluginType::Mongodb => "mongodb",
             PluginType::Mdns => "mdns",
+            PluginType::Consul => "consul",
         }
     }
 }
@@ -52,6 +57,13 @@ pub struct ServiceContent {
     pub lba: String,
     pub addr: String,
     pub r#type: i32, // 1:web service ,2:backend service
+}
+
+// ServiceContent implement Into<Vec<u8>>
+impl Into<Vec<u8>> for ServiceContent {
+    fn into(self) -> Vec<u8> {
+        serde_json::to_vec(&self).unwrap()
+    }
 }
 
 impl Default for ServiceContent {
@@ -73,18 +85,17 @@ pub enum PluginError {
 
 #[async_trait]
 pub trait Synchronize {
-    async fn cache_refresh(&mut self);
-    async fn remote_refresh(&mut self, ctx: Context, wg: WaitGroup);
-    async fn twoway_refresh(&mut self, ctx: Context, wg: WaitGroup);
+    // 持续在数据库中拿回数据
+    async fn gateway_service_handle(&mut self);
+    // 持续更新数据库中数据，且关闭时unregister
+    async fn backend_service_handle(&mut self, ctx: Context, wg: WaitGroup);
+    // 持续更新数据库中数据，且关闭时unregister
+    async fn web_service_handle(&mut self, ctx: Context, wg: WaitGroup);
 }
 
 #[async_trait]
 pub trait Plugin: Synchronize {
-    async fn register_service(
-        &self,
-        key: &str,
-        service_content: ServiceContent,
-    ) -> anyhow::Result<()>;
+    async fn register_service(&self, key: &str, sc: ServiceContent) -> anyhow::Result<()>;
 
     async fn get_web_service(&self, key: &str) -> anyhow::Result<Vec<ServiceContent>>;
 
@@ -106,19 +117,21 @@ pub async fn init_plugin(ctx: Context, wg: WaitGroup, st: ServiceType, pt: Plugi
     let mut plugin: Box<dyn Plugin + Send + Sync + 'static> = match pt {
         PluginType::Mongodb => Box::new(MongodbPlugin::new().await),
         PluginType::None => Box::new(NonePlugin::new().await),
+        PluginType::Etcd => Box::new(EtcdPlugin::new().await),
+        PluginType::Consul => Box::new(ConsulPlugin::new().await),
         _ => panic!("not support plugin type"),
     };
 
     // async task run...
     match st {
         ServiceType::ApiGateway => {
-            plugin.cache_refresh().await;
+            plugin.gateway_service_handle().await;
         }
         ServiceType::BackendService => {
-            plugin.twoway_refresh(ctx, wg).await;
+            plugin.backend_service_handle(ctx, wg).await;
         }
         ServiceType::WebService => {
-            plugin.remote_refresh(ctx, wg).await;
+            plugin.web_service_handle(ctx, wg).await;
         }
     }
 
