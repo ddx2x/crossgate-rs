@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use crossbeam::sync::WaitGroup;
 
+use once_cell::sync::OnceCell;
 use tokio_context::context::Context;
 
 mod etcd;
@@ -56,6 +57,7 @@ pub struct ServiceContent {
     pub service: String,
     pub lba: String,
     pub addr: String,
+    #[serde(rename = "type")]
     pub r#type: i32, // 1:web service ,2:backend service
 }
 
@@ -102,18 +104,18 @@ pub trait Plugin: Synchronize {
     async fn get_backend_service(&self, key: &str) -> anyhow::Result<(String, Vec<String>)>;
 }
 
-pub enum ServiceType {
+// Rename this enum to avoid conflict
+pub enum PluginServiceType {
     ApiGateway,
     BackendService,
     WebService,
 }
 
-use once_cell::sync::OnceCell;
-
 static PLUGIN: OnceCell<Box<dyn Plugin + Send + Sync + 'static>> = OnceCell::new();
 
+// Update the init_plugin function signature
 #[inline]
-pub async fn init_plugin(ctx: Context, wg: WaitGroup, st: ServiceType, pt: PluginType) {
+pub async fn init_plugin(ctx: Context, wg: WaitGroup, st: PluginServiceType, pt: PluginType) {
     let mut plugin: Box<dyn Plugin + Send + Sync + 'static> = match pt {
         PluginType::Mongodb => Box::new(MongodbPlugin::new().await),
         PluginType::None => Box::new(NonePlugin::new().await),
@@ -123,14 +125,15 @@ pub async fn init_plugin(ctx: Context, wg: WaitGroup, st: ServiceType, pt: Plugi
     };
 
     // async task run...
+    // Update the match statement
     match st {
-        ServiceType::ApiGateway => {
+        PluginServiceType::ApiGateway => {
             plugin.gateway_service_handle().await;
         }
-        ServiceType::BackendService => {
+        PluginServiceType::BackendService => {
             plugin.backend_service_handle(ctx, wg).await;
         }
-        ServiceType::WebService => {
+        PluginServiceType::WebService => {
             plugin.web_service_handle(ctx, wg).await;
         }
     }

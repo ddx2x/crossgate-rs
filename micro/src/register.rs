@@ -50,7 +50,7 @@ impl Register {
                 service: name.to_string(),
                 lba: lba.clone(),
                 addr: addr.clone(),
-                r#type: 1,
+                r#type: plugin::ServiceType::WEB,
             };
 
             plugin::register_service(name, content)

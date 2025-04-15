@@ -49,12 +49,7 @@ impl MongodbPlugin {
         dotenv::dotenv().ok();
         let uri = std::env::var("REGISTER_ADDR").expect("REGISTER_ADDR is not set");
 
-        let client = match mongodb::options::ClientOptions::parse_with_resolver_config(
-            &uri,
-            mongodb::options::ResolverConfig::cloudflare(),
-        )
-        .await
-        {
+        let client = match mongodb::options::ClientOptions::parse(&uri).await {
             Ok(options) => Client::with_options(options).unwrap(),
             Err(e) => panic!("{:?}", e),
         };
@@ -87,7 +82,6 @@ impl MongodbPlugin {
                             .build(),
                     )
                     .build(),
-                None,
             )
             .await;
     }
@@ -140,19 +134,16 @@ impl MongodbPlugin {
     ) -> anyhow::Result<()> {
         if self
             .group_collection()
-            .count_documents(doc! {"_id":id}, None)
+            .count_documents(doc! {"_id":id})
             .await?
             == 0
         {
             let _ = self
                 .group_collection()
-                .insert_one(
-                    MongoContent {
-                        id: id.to_string(),
-                        content: content.clone(),
-                    },
-                    None,
-                )
+                .insert_one(MongoContent {
+                    id: id.to_string(),
+                    content: content.clone(),
+                })
                 .await
                 .map_err(|e| crate::PluginError::Error(e.to_string()))?;
         } else {
@@ -167,8 +158,8 @@ impl MongodbPlugin {
                             "time": mongodb::bson::DateTime::now(),
                         },
                     },
-                    UpdateOptions::builder().upsert(false).build(),
                 )
+                .upsert(false)
                 .await
                 .map_err(|e| crate::PluginError::Error(e.to_string()))?;
         }
@@ -185,10 +176,8 @@ impl MongodbPlugin {
 
         let mut cursor = self
             .group_collection()
-            .find(
-                doc! { "service": key.to_string(),"type": r#type },
-                FindOptions::builder().sort(doc! { "_id": -1 }).build(),
-            )
+            .find(doc! { "service": key.to_string(),"type": r#type })
+            .sort(doc! {"_id":1})
             .await
             .map_err(|e| crate::PluginError::Error(e.to_string()))?;
 
@@ -240,7 +229,7 @@ impl MongodbPlugin {
         let contents = self.inner.lock().await;
         for c in contents.iter() {
             self.group_collection()
-                .delete_one(doc! {"_id":c.id.clone()}, None)
+                .delete_one(doc! {"_id":c.id.clone()})
                 .await
                 .map_err(|e| log::error!("unset service {:?}", e))
                 .unwrap();
@@ -295,11 +284,12 @@ impl Synchronize for MongodbPlugin {
         let mut s = self.clone();
 
         let block = async move {
-            let option = ChangeStreamOptions::builder()
-                .full_document(Some(FullDocumentType::UpdateLookup))
-                .build();
-
-            let mut stream = s.group_collection().watch(None, option).await.unwrap();
+            let mut stream = s
+                .group_collection()
+                .watch()
+                .full_document(FullDocumentType::UpdateLookup)
+                .await
+                .unwrap();
 
             while let Ok(Some(evt)) = stream
                 .try_next()
@@ -373,11 +363,12 @@ impl Synchronize for MongodbPlugin {
 
             let mut s = mongodb.clone();
             let block1 = async move {
-                let option = ChangeStreamOptions::builder()
-                    .full_document(Some(FullDocumentType::UpdateLookup))
-                    .build();
-
-                let mut stream = s.group_collection().watch(None, option).await.unwrap();
+                let mut stream = s
+                    .group_collection()
+                    .watch()
+                    .full_document(FullDocumentType::UpdateLookup)
+                    .await
+                    .unwrap();
 
                 while let Some(evt) = stream.try_next().await.unwrap() {
                     let ChangeStreamEvent::<MongoContent> {
