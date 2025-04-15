@@ -30,7 +30,7 @@ impl PartialEq for MongoContent {
 }
 
 static SCHEMA_NAME: &str = "crossgate";
-static COLLECTION_NAME: &str = "discovery";
+static COLLECTION_NAME: &str = "service";
 
 #[derive(Debug, Clone)]
 pub struct MongodbPlugin {

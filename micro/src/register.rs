@@ -3,10 +3,12 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RegisterError {
-    #[error("the register for key `{0}` is not available")]
-    RegisterError(String),
-    #[error("the service for key `{0}` is not available")]
-    ServiceError(String),
+    #[error("Failed to register service: {0}")]
+    RegistrationFailed(String),
+    #[error("Service not found: {0}")]
+    ServiceNotFound(String),
+    #[error("Invalid service configuration: {0}")]
+    InvalidConfiguration(String),
 }
 
 static REGISTER: Register = Register {};
@@ -22,40 +24,38 @@ impl Default for Register {
 
 impl Register {
     pub(crate) async fn register_web_service(&self, service: &dyn Service) -> anyhow::Result<()> {
-        let lba = service.lab().to_string();
-
-        dotenv::dotenv().ok();
-
-        let mut addr = format!(
+        let load_balancer_algorithm = service.load_balancer_algorithm().to_string();
+        let mut service_address = format!(
             "{}:{}",
             local_ip_address::local_ip()?,
             service.addr().port()
         );
 
-        let strict_address = ::std::env::var("STRICT").unwrap_or("".to_string());
-
-        if !strict_address.is_empty() {
-            addr = strict_address
+        // Check for strict address override
+        if let Ok(strict_address) = ::std::env::var("STRICT") {
+            if !strict_address.is_empty() {
+                service_address = strict_address;
+            }
         }
 
         log::info!(
-            "registry web service is {} ip {} lba {}",
+            "Registering web service: name={}, address={}, load_balancer={}",
             service.name(),
-            addr,
-            service.lab()
+            service_address,
+            service.load_balancer_algorithm()
         );
 
-        for name in service.name().split(',').collect::<Vec<&str>>() {
+        for service_name in service.name().split(',') {
             let content = plugin::ServiceContent {
-                service: name.to_string(),
-                lba: lba.clone(),
-                addr: addr.clone(),
-                r#type: plugin::ServiceType::WEB,
+                service: service_name.to_string(),
+                lba: load_balancer_algorithm.clone(),
+                addr: service_address.clone(),
+                r#type: 1,
             };
 
-            plugin::register_service(name, content)
+            plugin::register_service(service_name, content)
                 .await
-                .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
+                .map_err(|e| RegisterError::RegistrationFailed(e.to_string()))?;
         }
         Ok(())
     }
@@ -72,62 +72,47 @@ impl Register {
 
         plugin::register_service(&service.group(), content)
             .await
-            .map_err(|e| RegisterError::RegisterError(e.to_string()))?;
+            .map_err(|e| RegisterError::RegistrationFailed(e.to_string()))?;
 
         Ok(())
     }
 
     pub async fn get_backend_service(&self, name: &str) -> anyhow::Result<(String, Vec<String>)> {
-        let (id, mut ids) = plugin::get_backend_service(name)
+        let (service_id, mut service_ids) = plugin::get_backend_service(name)
             .await
-            .map_err(|_| RegisterError::ServiceError("service not found ".to_string()))?;
-        ids.sort();
-        Ok((id, ids.to_owned()))
+            .map_err(|_| RegisterError::ServiceNotFound(name.to_string()))?;
+
+        service_ids.sort();
+        Ok((service_id, service_ids))
     }
 
-    pub(crate) async fn get_web_service_by_lba<'a>(
+    pub(crate) async fn get_web_service_by_algorithm<'a>(
         &'a self,
         name: &'a str,
-        lba: LoadBalancerAlgorithm,
-    ) -> anyhow::Result<(crate::LoadBalancerAlgorithm, Endpoint)> {
-        let contents = plugin::get_web_service(name)
+        algorithm: &LoadBalancerAlgorithm,
+    ) -> anyhow::Result<(LoadBalancerAlgorithm, Endpoint)> {
+        let services = plugin::get_web_service(name)
             .await
-            .map_err(|_| RegisterError::ServiceError("service not found ".to_string()))?;
+            .map_err(|_| RegisterError::ServiceNotFound(name.to_string()))?;
 
-        let mut filter_contents = vec![];
-
-        match lba.clone() {
-            crate::LoadBalancerAlgorithm::RoundRobin => {
-                filter_contents.extend(
-                    contents
-                        .iter()
-                        .filter(|item| item.lba == "RoundRobin")
-                        .collect::<Vec<&plugin::ServiceContent>>(),
-                );
-            }
-            crate::LoadBalancerAlgorithm::Random => {
-                filter_contents.extend(
-                    contents
-                        .iter()
-                        .filter(|item| item.lba == "Random")
-                        .collect::<Vec<&plugin::ServiceContent>>(),
-                );
-            }
-            crate::LoadBalancerAlgorithm::Strict(v) => {
-                filter_contents.extend(
-                    contents
-                        .iter()
-                        .filter(|item| item.lba == "Strict" && item.addr == v)
-                        .collect::<Vec<&plugin::ServiceContent>>(),
-                );
-            }
+        let filtered_services = match algorithm {
+            LoadBalancerAlgorithm::RoundRobin => services
+                .iter()
+                .filter(|item| item.lba == "RoundRobin")
+                .collect::<Vec<&plugin::ServiceContent>>(),
+            LoadBalancerAlgorithm::Random => services
+                .iter()
+                .filter(|item| item.lba == "Random")
+                .collect::<Vec<&plugin::ServiceContent>>(),
+            LoadBalancerAlgorithm::Strict(address) => services
+                .iter()
+                .filter(|item| item.lba == "Strict" && item.addr == address.as_str())
+                .collect::<Vec<&plugin::ServiceContent>>(),
         };
 
         Ok((
-            lba,
-            crate::Endpoint {
-                addr: filter_contents.iter().map(|c| c.addr.clone()).collect(),
-            },
+            algorithm.clone(),
+            Endpoint::new(filtered_services.iter().map(|c| c.addr.clone()).collect()),
         ))
     }
 
@@ -135,27 +120,17 @@ impl Register {
         &self,
         name: &str,
     ) -> anyhow::Result<(LoadBalancerAlgorithm, Endpoint)> {
-        if let Ok(contents) = plugin::get_web_service(name).await {
-            let addrs = contents
-                .iter()
-                .map(|c: &plugin::ServiceContent| c.addr.clone())
-                .collect();
-            let mut lba = "".to_string();
+        let services = plugin::get_web_service(name)
+            .await
+            .map_err(|_| RegisterError::ServiceNotFound(name.to_string()))?;
 
-            // 如果有多个服务，那么需要按照负载均衡算法优先级选择一个，Strict优先级最高
-            if !contents.is_empty() {
-                // 其实这里需要按照负载均衡算法优先级选择一个
-                lba = contents[0].lba.clone();
-            }
-
-            return Ok((
-                crate::LoadBalancerAlgorithm::from(lba),
-                crate::Endpoint { addr: addrs },
-            ));
+        if services.is_empty() {
+            return Err(RegisterError::ServiceNotFound(name.to_string()).into());
         }
 
-        Err(anyhow::anyhow!(RegisterError::ServiceError(
-            "service not found ".to_string(),
-        )))
+        let addresses = services.iter().map(|c| c.addr.clone()).collect();
+        let algorithm = LoadBalancerAlgorithm::from(services[0].lba.clone());
+
+        Ok((algorithm, Endpoint::new(addresses)))
     }
 }

@@ -1,4 +1,4 @@
-use crate::{make_executor, Register};
+use crate::{register_executor, Register};
 use crossbeam::sync::WaitGroup;
 use futures::future::BoxFuture;
 use plugin::get_plugin_type;
@@ -30,14 +30,14 @@ where
     let _ = plugin::init_plugin(
         h.spawn_ctx(),
         wg.clone(),
-        plugin::ServiceType::BackendService,
+        plugin::PluginServiceType::BackendService,
         get_plugin_type(&t),
     )
     .await;
 
     log::info!("backend service {} start", e.group());
 
-    let (e, r) = make_executor(e).await;
+    let (e, r) = register_executor(e).await;
 
     tokio::select! {
         _ = e.start(h.spawn_ctx(),&r)  => {},

@@ -6,12 +6,13 @@ use hyper::{Body, Server};
 use hyper::{Request, Response, StatusCode};
 use plugin::get_plugin_type;
 use plugin::PluginType::Mongodb;
+use std::sync::Arc;
 use tokio_context::context::Context;
 
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 
-use crate::{Endpoint, Register};
+use crate::Register;
 
 static TITLE: &str = r#"
 <html>
@@ -115,11 +116,10 @@ async fn intercept(
                 .body("strict address is empty".into())
                 .unwrap());
         }
-
         let (lba, endpoint) = match register
-            .get_web_service_by_lba(
+            .get_web_service_by_algorithm(
                 &service_name,
-                crate::LoadBalancerAlgorithm::Strict(strict_address),
+                &crate::LoadBalancerAlgorithm::Strict(Arc::new(strict_address)),
             )
             .await
         {
@@ -132,14 +132,18 @@ async fn intercept(
             }
         };
 
-        if endpoint.get_address().is_empty() {
+        if endpoint.get_service_addresses().is_empty() {
             return Ok(Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
                 .body(format!("{} not found", service_name).into())
                 .unwrap());
         }
 
-        let forward_addr = format!("http://{}", lba.hash(endpoint.get_address().as_slice()));
+        let forward_addr = format!(
+            "http://{}",
+            lba.select_address(endpoint.get_service_addresses())
+                .unwrap_or_default()
+        );
 
         match net::get_proxy_client()
             .call(client_ip, &forward_addr, req)
@@ -165,14 +169,18 @@ async fn intercept(
         }
     };
 
-    if 0 == endpoint.get_address().len() {
+    if endpoint.get_service_addresses().is_empty() {
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body(format!("{} not found", service_name).into())
             .unwrap());
     }
 
-    let forward_addr = format!("http://{}", lba.hash(endpoint.get_address().as_slice()));
+    let forward_addr = format!(
+        "http://{}",
+        lba.select_address(endpoint.get_service_addresses())
+            .unwrap_or_default()
+    );
 
     match net::get_proxy_client()
         .call(client_ip, &forward_addr, req)
@@ -200,7 +208,7 @@ pub async fn run(addr: String, intercepters: &'static [Intercepter], sh: Option<
     plugin::init_plugin(
         ctx,
         wg.clone(),
-        plugin::ServiceType::ApiGateway,
+        plugin::PluginServiceType::ApiGateway,
         get_plugin_type(&register_type_name),
     )
     .await;

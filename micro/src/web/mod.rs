@@ -15,7 +15,7 @@ pub async fn web_service_run<'a>(addr: &'a SocketAddr, srf: ServerRunFn) {
     plugin::init_plugin(
         ctx,
         wg.clone(),
-        plugin::ServiceType::WebService,
+        plugin::PluginServiceType::WebService,
         get_plugin_type(&t),
     )
     .await;
