@@ -52,13 +52,16 @@ impl PluginType {
     }
 }
 
+fn default_type() -> i32 {
+    1
+}
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct ServiceContent {
     pub service: String,
     pub lba: String,
     pub addr: String,
-    #[serde(rename = "type")]
-    pub r#type: i32, // 1:web service ,2:backend service
+    #[serde(default = "default_type")]
+    pub r#type: i32, // 1:web service ,2:backend service; 如果为空则默认为1
 }
 
 // ServiceContent implement Into<Vec<u8>>

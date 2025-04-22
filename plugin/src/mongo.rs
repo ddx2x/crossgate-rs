@@ -8,9 +8,11 @@ use crate::async_trait;
 use mongodb::{
     bson::{doc, oid::ObjectId},
     change_stream::{self, event::ChangeStreamEvent},
-    options::{ChangeStreamOptions, FindOptions, FullDocumentType, IndexOptions, UpdateOptions},
+    options::{FullDocumentType, IndexOptions},
     Client, IndexModel,
 };
+
+use anyhow::Result;
 
 use crate::{Plugin, ServiceContent, Synchronize};
 
@@ -30,17 +32,14 @@ impl PartialEq for MongoContent {
 }
 
 static SCHEMA_NAME: &str = "crossgate";
-static COLLECTION_NAME: &str = "service";
+static COLLECTION_NAME: &str = "discovery";
 
 #[derive(Debug, Clone)]
 pub struct MongodbPlugin {
     inner: Arc<Mutex<Vec<MongoContent>>>,
-
     cache: Arc<Mutex<HashMap<String, Vec<MongoContent>>>>,
-
     schema: String,
     collection: String,
-
     client: Client,
 }
 
@@ -57,10 +56,8 @@ impl MongodbPlugin {
         let mut s = Self {
             inner: Arc::new(Mutex::new(vec![])),
             cache: Arc::new(Mutex::new(HashMap::new())),
-
             schema: SCHEMA_NAME.to_string(),
             collection: COLLECTION_NAME.to_string(),
-
             client,
         };
 
@@ -127,11 +124,7 @@ impl MongodbPlugin {
         }
     }
 
-    async fn service_content_apply(
-        &self,
-        id: &str,
-        content: &ServiceContent,
-    ) -> anyhow::Result<()> {
+    async fn service_content_apply(&self, id: &str, content: &ServiceContent) -> Result<()> {
         if self
             .group_collection()
             .count_documents(doc! {"_id":id})
@@ -167,11 +160,7 @@ impl MongodbPlugin {
         Ok(())
     }
 
-    async fn list_mongo_content(
-        &self,
-        key: String,
-        r#type: i32,
-    ) -> anyhow::Result<Vec<MongoContent>> {
+    async fn list_mongo_content(&self, key: String, r#type: i32) -> Result<Vec<MongoContent>> {
         let mut mongo_contents: Vec<MongoContent> = vec![];
 
         let mut cursor = self
@@ -201,14 +190,10 @@ impl MongodbPlugin {
         Ok(mongo_contents)
     }
 
-    async fn list_service_content(
-        &self,
-        key: &str,
-        r#type: i32,
-    ) -> anyhow::Result<Vec<ServiceContent>> {
-        let mongo_contents = self.list_mongo_content(key.to_string(), r#type).await?;
-
-        Ok(mongo_contents
+    async fn list_service_content(&self, key: &str, r#type: i32) -> Result<Vec<ServiceContent>> {
+        Ok(self
+            .list_mongo_content(key.to_string(), r#type)
+            .await?
             .iter()
             .map(|mc| mc.content.clone())
             .collect::<Vec<ServiceContent>>())
@@ -239,22 +224,23 @@ impl MongodbPlugin {
 
 #[async_trait]
 impl Plugin for MongodbPlugin {
-    async fn register_service(&self, _: &str, val: ServiceContent) -> anyhow::Result<()> {
+    async fn register_service(&self, _: &str, val: ServiceContent) -> Result<()> {
         self.service_content_apply(&self.mongo_content_builder(&val).await, &val)
             .await
     }
 
-    async fn get_web_service(&self, k: &str) -> anyhow::Result<Vec<ServiceContent>> {
+    async fn get_web_service(&self, k: &str) -> Result<Vec<ServiceContent>> {
         if let Some(v) = self.cache.lock().await.get(k) {
             return Ok(v
                 .iter()
                 .map(|item| item.content.clone())
                 .collect::<Vec<ServiceContent>>());
         }
-        self.list_service_content(k, 1).await
+
+        Ok(self.list_service_content(k, 1).await?)
     }
 
-    async fn get_backend_service(&self, k: &str) -> anyhow::Result<(String, Vec<String>)> {
+    async fn get_backend_service(&self, k: &str) -> Result<(String, Vec<String>)> {
         let mut self_id: String = "".into();
         let inner = self.inner.lock().await;
         if let Some(v) = inner.iter().find(|c| c.content.service.eq(k)) {
